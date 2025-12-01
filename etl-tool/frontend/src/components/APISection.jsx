@@ -34,6 +34,8 @@ function APISection({ data, setData }) {
   const dataRef = useRef([])
   const lastUpdateTimeRef = useRef(0) // Track last update time for debouncing
   const lastStateDataRef = useRef(null) // Track last state data to prevent unnecessary updates
+  const lastDataReceivedTimeRef = useRef(null) // Track when data was last received
+  const streamHealthCheckRef = useRef(null) // Reference for stream health check interval
 
   // Quick Connect configurations
   const quickConnectOptions = [
@@ -117,6 +119,7 @@ function APISection({ data, setData }) {
       // Initial fetch immediately
       console.log('🔄 Initial fetch from api_connector_data table...')
       fetchDataFromDatabase(connectorId)
+      lastDataReceivedTimeRef.current = Date.now() // Initialize last data time
       
       // Then refresh every 10 seconds to get latest data from api_connector_data table
       // Increased interval significantly to reduce flickering
@@ -125,10 +128,49 @@ function APISection({ data, setData }) {
         fetchDataFromDatabase(connectorId)
       }, 10000) // Refresh every 10 seconds to minimize flickering
       
+      // Stream health check - detect if stream is stuck (no data for 2 minutes)
+      streamHealthCheckRef.current = setInterval(() => {
+        const now = Date.now()
+        const timeSinceLastData = lastDataReceivedTimeRef.current 
+          ? now - lastDataReceivedTimeRef.current 
+          : 0
+        
+        // If no data received for 2 minutes (120000ms), consider stream stuck
+        if (timeSinceLastData > 120000 && lastDataReceivedTimeRef.current !== null && connectorStatus === 'running') {
+          console.error('⚠️ Stream appears to be stuck - no data received for 2 minutes')
+          setError('⚠️ Real-time stream appears to be stuck. No data received for 2 minutes. The stream will be reset.')
+          setConnectorStatus('error')
+          
+          // Clear health check to prevent multiple triggers
+          if (streamHealthCheckRef.current) {
+            clearInterval(streamHealthCheckRef.current)
+            streamHealthCheckRef.current = null
+          }
+          
+          // Reset to basic state after showing error
+          setTimeout(async () => {
+            await handleStopConnector()
+            setError('Stream was reset due to inactivity. Please start a new stream.')
+            lastDataReceivedTimeRef.current = null
+          }, 3000) // Wait 3 seconds before resetting
+        }
+      }, 30000) // Check every 30 seconds
+      
       return () => {
         console.log('🔄 Clearing auto-refresh interval')
         clearInterval(interval)
+        if (streamHealthCheckRef.current) {
+          clearInterval(streamHealthCheckRef.current)
+          streamHealthCheckRef.current = null
+        }
       }
+    } else {
+      // Clear health check when not running
+      if (streamHealthCheckRef.current) {
+        clearInterval(streamHealthCheckRef.current)
+        streamHealthCheckRef.current = null
+      }
+      lastDataReceivedTimeRef.current = null
     }
   }, [connectorStatus, connectorId])
 
@@ -263,6 +305,9 @@ function APISection({ data, setData }) {
         }
         
         if (dataResult.data && dataResult.data.length > 0) {
+          // Update last data received time
+          lastDataReceivedTimeRef.current = Date.now()
+          
           // Backend already formats data for table display
           // Just ensure proper formatting for frontend
           const formattedData = dataResult.data.map(item => {
@@ -410,8 +455,34 @@ function APISection({ data, setData }) {
     }
     setBackendOnline(true)
 
+    // Clean up any existing connector/stream before starting new one
+    if (connectorId && connectorStatus === 'running') {
+      // Stop existing connector first
+      await handleStopConnector()
+      // Wait a bit for cleanup
+      await new Promise(resolve => setTimeout(resolve, 500))
+    }
+    
+    // Disconnect any existing WebSocket connection
+    if (wsRef.current) {
+      try {
+        wsRef.current.disconnect()
+      } catch (e) {
+        console.log('WebSocket already disconnected or error disconnecting:', e)
+      }
+      wsRef.current = null
+    }
+
     setLoading(true)
     setError(null)
+    
+    // Reset all state and refs for fresh start
+    dataRef.current = []
+    lastUpdateTimeRef.current = 0
+    lastStateDataRef.current = null
+    lastDataReceivedTimeRef.current = null
+    setData(null)
+    setWsConnected(false)
 
     try {
       // Parse headers and query params
@@ -559,6 +630,9 @@ function APISection({ data, setData }) {
               } else if (message.data) {
                 flatMessage.raw_data = flatMessage.processed_data
               }
+              
+              // Update last data received time when WebSocket message arrives
+              lastDataReceivedTimeRef.current = Date.now()
               
               // Check if message already exists (avoid duplicates)
               const existingIndex = dataRef.current.findIndex(item => 
@@ -722,12 +796,42 @@ function APISection({ data, setData }) {
         setWsConnected(false)
         // Disconnect WebSocket
         if (wsRef.current) {
-          wsRef.current.disconnect()
+          try {
+            wsRef.current.disconnect()
+          } catch (e) {
+            console.log('WebSocket already disconnected')
+          }
           wsRef.current = null
         }
+        // Clear health check
+        if (streamHealthCheckRef.current) {
+          clearInterval(streamHealthCheckRef.current)
+          streamHealthCheckRef.current = null
+        }
+        // Reset all refs and state
+        lastDataReceivedTimeRef.current = null
+        dataRef.current = []
+        lastUpdateTimeRef.current = 0
+        lastStateDataRef.current = null
+        // Clear data from UI
+        setData(null)
+        // Reset connector state
+        setConnectorId(null)
+        setConnectorStatus('inactive')
+        setError(null)
       }
     } catch (err) {
       setError(`Error stopping connector: ${err.message}`)
+    }
+  }
+  
+  const handleStartOrStopStream = async () => {
+    if (connectorStatus === 'running') {
+      // Stop the stream
+      await handleStopConnector()
+    } else {
+      // Start the stream
+      await handleExtract()
     }
   }
   
@@ -978,7 +1082,7 @@ function APISection({ data, setData }) {
           {connectorId && (
             <div className="input-group" style={{ 
               padding: '15px', 
-              backgroundColor: connectorStatus === 'running' ? '#e8f5e9' : '#fff3e0',
+              backgroundColor: '#e5e7eb',
               borderRadius: '5px',
               marginTop: '15px'
             }}>
@@ -990,7 +1094,7 @@ function APISection({ data, setData }) {
                   </div>}
                   {connectorStatus === 'running' && (
                     <div style={{ fontSize: '0.9em', color: '#666', marginTop: '5px' }}>
-                      WebSocket: {wsConnected ? '✅ Connected' : '⏳ Connecting...'}
+                      API: {wsConnected ? '✅ Connected' : '⏳ Connecting...'}
                     </div>
                   )}
                   {connectorId && (
@@ -1040,37 +1144,36 @@ function APISection({ data, setData }) {
                     </div>
                   )}
                 </div>
-                {connectorStatus === 'running' && (
-                  <button
-                    onClick={handleStopConnector}
-                    style={{
-                      padding: '8px 16px',
-                      backgroundColor: '#f44336',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    Stop Connector
-                  </button>
-                )}
               </div>
             </div>
           )}
 
           <div className="button-group">
-            <button 
-              onClick={handleExtract} 
-              disabled={loading || !apiUrl || !backendOnline}
-              className="extract-button"
-            >
-              {loading 
-                ? 'Creating Connector...' 
-                : ingestionMode === 'Real-Time Streaming (New)' 
-                  ? 'Start Real-Time Stream' 
-                  : 'Extract from API'}
-            </button>
+            {ingestionMode === 'Real-Time Streaming (New)' ? (
+              <button 
+                onClick={handleStartOrStopStream} 
+                disabled={loading || !apiUrl || !backendOnline}
+                className={connectorStatus === 'running' ? 'stop-button' : 'extract-button'}
+                style={connectorStatus === 'running' ? {
+                  backgroundColor: '#f44336',
+                  color: 'white'
+                } : {}}
+              >
+                {loading 
+                  ? 'Creating Connector...' 
+                  : connectorStatus === 'running'
+                    ? 'Stop Real-Time Stream'
+                    : 'Start Real-Time Stream'}
+              </button>
+            ) : (
+              <button 
+                onClick={handleExtract} 
+                disabled={loading || !apiUrl || !backendOnline}
+                className="extract-button"
+              >
+                {loading ? 'Extracting...' : 'Extract from API'}
+              </button>
+            )}
             {error && <div className="error-message" style={{ marginTop: '15px' }}>{error}</div>}
           </div>
         </div>
