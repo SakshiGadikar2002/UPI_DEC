@@ -278,20 +278,26 @@ function DataDisplay({ sectionData }) {
     <div className="data-display">
       <div className="data-header">
           <div className="data-source-info">
-            <div className="header-top-row">
+            <div className="header-top-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
               <h3>{finalShouldShowTable ? 'Real-Time Ingested Data' : source}</h3>
               {finalShouldShowTable && (sectionData.status === 'running' || sectionData.connector_id) && (
                 <span style={{
-                  marginLeft: '10px',
-                  padding: '4px 8px',
-                  backgroundColor: '#4caf50',
-                  color: 'white',
-                  borderRadius: '4px',
-                  fontSize: '0.8em',
+                  color: '#ef4444',
+                  fontSize: '0.9em',
                   fontWeight: 'bold',
-                  animation: 'pulse 2s infinite'
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '5px'
                 }}>
-                  🔴 LIVE
+                  <span style={{ 
+                    width: '8px', 
+                    height: '8px', 
+                    borderRadius: '50%', 
+                    backgroundColor: '#ef4444',
+                    display: 'inline-block',
+                    animation: 'pulse 2s infinite'
+                  }}></span>
+                  LIVE
                 </span>
               )}
             </div>
