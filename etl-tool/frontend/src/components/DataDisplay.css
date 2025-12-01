@@ -1,0 +1,394 @@
+.data-display {
+  background: white;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.data-display.empty {
+  min-height: 400px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.empty-state {
+  text-align: center;
+  color: #666666;
+}
+
+.empty-state p {
+  margin: 10px 0;
+  font-size: 0.9rem;
+  color: #000000;
+}
+
+.empty-hint {
+  font-size: 0.75rem !important;
+  color: #666666 !important;
+}
+
+.data-header {
+  background: #f5f5f5;
+  color: #000000;
+  padding: 20px 30px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 15px;
+}
+
+.header-top-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.data-source-info h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #000000;
+}
+
+.data-stats .download-buttons {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-left: auto;
+}
+
+.download-btn {
+  padding: 6px 10px;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  background: white;
+  color: #000000;
+  cursor: pointer;
+  transition: all 0.3s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 0.75rem;
+}
+
+.download-btn:hover {
+  background: #f5f5f5;
+  border-color: #cccccc;
+}
+
+.download-btn svg {
+  stroke: #000000;
+}
+
+.download-label {
+  font-weight: 500;
+}
+
+.data-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 0.75rem;
+  color: #666666;
+}
+
+.meta-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.data-stats {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.stat-item {
+  padding: 0;
+  font-size: 0.75rem;
+  color: #000000;
+}
+
+.progress-time {
+  color: #666666 !important;
+}
+
+.progress-time strong {
+  color: #000000;
+  font-weight: 600;
+}
+
+.stat-item strong {
+  font-size: 1.2rem;
+  margin-right: 5px;
+  color: #000000;
+}
+
+.stat-item.duplicate-stat {
+  color: #856404;
+}
+
+.stat-item.duplicate-stat strong {
+  color: #856404;
+}
+
+.stat-item.showing-info {
+  font-size: 0.875rem;
+  color: #666;
+  padding: 6px 12px;
+  background: #f5f5f5;
+  border-radius: 4px;
+}
+
+.stat-item.showing-info strong {
+  font-size: 0.875rem;
+  color: #000;
+}
+
+.data-content {
+  padding: 20px;
+  max-height: 600px;
+  overflow: auto;
+}
+
+.data-table-container {
+  /* Prevent flickering during updates */
+  will-change: contents;
+  transform: translateZ(0);
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+  overflow-x: auto;
+}
+
+.data-table {
+  /* Prevent flickering during updates */
+  table-layout: fixed;
+  width: 100%;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+
+.data-table thead {
+  background: #f5f5f5;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.data-table th {
+  padding: 8px 10px;
+  text-align: left;
+  font-weight: 600;
+  color: #000000;
+  white-space: nowrap;
+  font-size: 0.75rem;
+}
+
+.data-table td {
+  padding: 6px 10px;
+  color: #000000;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+}
+
+.data-table tbody tr:hover {
+  background: #f5f5f5;
+}
+
+.data-table tbody tr:nth-child(even) {
+  background: #fafafa;
+}
+
+.data-table tbody tr:nth-child(even):hover {
+  background: #f0f0f0;
+}
+
+.data-table tbody tr.current-row {
+  background: #f0f0f0 !important;
+  border-left: 3px solid #666666;
+}
+
+.data-table tbody tr.current-row:hover {
+  background: #e8e8e8 !important;
+}
+
+.data-table .row-number {
+  width: 50px;
+  text-align: center;
+  font-weight: 600;
+  color: #666666;
+  background: #f5f5f5;
+}
+
+.data-table thead .row-number {
+  background: #f5f5f5;
+}
+
+.pagination-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px;
+  background: #f5f5f5;
+  border-radius: 6px;
+  margin-bottom: 15px;
+}
+
+.pagination-btn {
+  padding: 8px 16px;
+  background: white;
+  color: #000000;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.pagination-btn:hover:not(:disabled) {
+  background: #f5f5f5;
+  border-color: #cccccc;
+}
+
+.pagination-btn:disabled {
+  background: #f5f5f5;
+  cursor: not-allowed;
+  color: #999999;
+  border-color: #e0e0e0;
+}
+
+.pagination-info {
+  font-size: 0.85rem;
+  color: #000000;
+  font-weight: 500;
+}
+
+.parse-errors-section {
+  margin: 20px 30px;
+  padding: 15px;
+  background: #fff3cd;
+  border-radius: 6px;
+  border: 1px solid #ffeaa7;
+}
+
+.parse-errors-section h4 {
+  margin: 0 0 10px 0;
+  font-size: 0.9rem;
+  color: #856404;
+  font-weight: 600;
+}
+
+.parse-errors-list {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.parse-error-item {
+  padding: 8px;
+  margin-bottom: 8px;
+  background: white;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.parse-error-item:last-child {
+  margin-bottom: 0;
+}
+
+.error-line {
+  font-weight: 600;
+  color: #856404;
+}
+
+.error-message {
+  color: #721c24;
+}
+
+.error-content {
+  color: #666666;
+  font-style: italic;
+  font-size: 0.7rem;
+}
+
+.parse-error-more {
+  padding: 8px;
+  text-align: center;
+  color: #856404;
+  font-size: 0.75rem;
+  font-style: italic;
+}
+
+.data-truncated {
+  margin-top: 15px;
+  padding: 10px;
+  background: #f5f5f5;
+  border-radius: 4px;
+  color: #000000;
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.data-json {
+  background: #f5f5f5;
+  border-radius: 6px;
+  padding: 15px;
+  overflow-x: auto;
+}
+
+.data-json pre {
+  margin: 0;
+  font-family: 'Courier New', monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: #000000;
+}
+
+/* Charts Section Styles */
+.websocket-charts-section {
+  margin-top: 30px;
+  padding: 20px;
+  background: #fafafa;
+  border-radius: 6px;
+  border: 1px solid #e0e0e0;
+}
+
+.websocket-charts-section h3 {
+  margin: 0 0 20px 0;
+  color: #000000;
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+.charts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+  gap: 20px;
+}
+
+.chart-container {
+  background: white;
+  padding: 15px;
+  border-radius: 6px;
+  border: 1px solid #e0e0e0;
+}
+
+.chart-container h4 {
+  margin: 0 0 15px 0;
+  color: #000000;
+  font-size: 1rem;
+  font-weight: 600;
+}

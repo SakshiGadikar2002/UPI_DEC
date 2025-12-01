@@ -1,0 +1,143 @@
+.sidebar-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 998;
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .sidebar-overlay {
+    display: block;
+  }
+}
+
+.sidebar {
+  width: 280px;
+  background: #ffffff;
+  color: #000000;
+  height: 100vh;
+  position: fixed;
+  left: 0;
+  top: 70px;
+  display: flex;
+  flex-direction: column;
+  z-index: 1000;
+  transition: transform 0.3s ease;
+  height: calc(100vh - 70px);
+}
+
+.sidebar.closed {
+  transform: translateX(-100%);
+}
+
+.sidebar.open {
+  transform: translateX(0);
+}
+
+
+.sidebar-toggle {
+  position: fixed;
+  top: 85px;
+  left: 20px;
+  background: #78176b;
+  color: white;
+  border: none;
+  font-size: 1.1rem;
+  padding: 8px 12px;
+  cursor: pointer;
+  z-index: 1002;
+  border-radius: 4px;
+  /* box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 38px;
+  min-height: 38px;
+}
+
+.sidebar-toggle:hover {
+  background: #5d0f52;
+}
+
+.sidebar-nav {
+  flex: 1;
+  padding: 20px 0;
+  overflow-y: auto;
+}
+
+.sidebar-item {
+  width: 100%;
+  padding: 12px 20px;
+  background: none;
+  border: none;
+  color: #000000;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: all 0.3s ease;
+  border-left: 3px solid transparent;
+  position: relative;
+}
+
+.sidebar-item:hover {
+  background: #f5f5f5;
+  border-left-color: #78176b;
+}
+
+.sidebar-item.active {
+  background: #f0f0f0;
+  border-left-color: #78176b;
+  font-weight: 600;
+}
+
+.sidebar-icon {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #000000;
+}
+
+.sidebar-item.active .sidebar-icon {
+  color: #78176b;
+}
+
+.sidebar-item:hover .sidebar-icon {
+  color: #78176b;
+}
+
+.sidebar-item-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.sidebar-label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #000000;
+}
+
+.sidebar-description {
+  font-size: 0.7rem;
+  color: #666666;
+}
+
+.realtime-badge {
+  background: #78176b;
+  color: white;
+  font-size: 0.7rem;
+  padding: 3px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
