@@ -100,7 +100,9 @@ class RESTConnector(BaseConnector):
                 content_type = response.headers.get('Content-Type', '')
                 
                 if 'application/json' in content_type:
-                    data = await response.json()
+                    raw_data = await response.json()
+                    # Extract nested data from common API response formats
+                    data = self._extract_nested_data(raw_data)
                 elif 'text/csv' in content_type:
                     text = await response.text()
                     # Simple CSV parsing (can be enhanced)
@@ -111,15 +113,18 @@ class RESTConnector(BaseConnector):
                         for line in lines[1:]:
                             values = line.split(',')
                             data.append(dict(zip(headers_list, values)))
+                    else:
+                        data = []
                 else:
                     data = {"raw": await response.text()}
+                    raw_data = data
                 
                 return {
                     "status": "success",
                     "data": data,
                     "status_code": response.status,
                     "headers": dict(response.headers),
-                    "raw_response": data,  # Store raw response for database
+                    "raw_response": raw_data if 'raw_data' in locals() else data,  # Store raw response for database
                     "response_time_ms": response_time
                 }
         except asyncio.TimeoutError:
@@ -129,13 +134,16 @@ class RESTConnector(BaseConnector):
     
     async def process_message(self, message: Any) -> Dict[str, Any]:
         """Process API response message"""
-        # For REST, the message is the API response
+        # For REST, the message is the API response from _make_request
+        # It has structure: {"status": "success", "data": extracted_data, "raw_response": original_response, ...}
         if isinstance(message, dict) and "data" in message:
-            data = message["data"]
-            raw_response = message.get("raw_response", message["data"])
+            # This is the response wrapper from _make_request
+            data = message["data"]  # Already extracted nested data
+            raw_response = message.get("raw_response", message.get("data"))
             status_code = message.get("status_code")
             response_time_ms = message.get("response_time_ms")
         else:
+            # Fallback: treat message as raw data
             data = message
             raw_response = message
             status_code = None
@@ -145,7 +153,7 @@ class RESTConnector(BaseConnector):
         # If data is a list, we'll store the whole list as data (for orderbook, etc.)
         # The frontend will handle displaying it
         if isinstance(data, list):
-            # For lists (like orderbook data), store the whole list
+            # For lists (like orderbook data, trades, etc.), store the whole list
             return {
                 "exchange": self._detect_exchange(),
                 "data": data,  # Store the whole list
@@ -158,6 +166,7 @@ class RESTConnector(BaseConnector):
             }
         elif isinstance(data, dict):
             # For dict responses, store as-is
+            # This could be a single object or nested structure
             return {
                 "exchange": self._detect_exchange(),
                 "data": data,
@@ -169,7 +178,7 @@ class RESTConnector(BaseConnector):
                 "response_time_ms": response_time_ms
             }
         else:
-            # For other types, wrap in a dict
+            # For other types (string, number, etc.), wrap in a dict
             return {
                 "exchange": self._detect_exchange(),
                 "data": {"value": data},
@@ -180,6 +189,44 @@ class RESTConnector(BaseConnector):
                 "status_code": status_code,
                 "response_time_ms": response_time_ms
             }
+    
+    def _extract_nested_data(self, response_data: Any) -> Any:
+        """Extract nested data from common API response formats"""
+        if not isinstance(response_data, dict):
+            return response_data
+        
+        # OKX format: {"code":"0","msg":"","data":[...]}
+        if "code" in response_data and "data" in response_data:
+            # Check if code indicates success (0 or "0" or "200" or 200)
+            code = response_data.get("code")
+            if code == 0 or code == "0" or code == 200 or code == "200":
+                nested_data = response_data.get("data")
+                if nested_data is not None:
+                    return nested_data
+        
+        # KuCoin format: {"code":"200000","data":{...}} or {"code":"200000","data":[...]}
+        if "code" in response_data and "data" in response_data:
+            code = response_data.get("code")
+            if code == "200000" or code == 200000:
+                nested_data = response_data.get("data")
+                if nested_data is not None:
+                    return nested_data
+        
+        # Generic format: {"data":[...]} or {"data":{...}}
+        if "data" in response_data and len(response_data) <= 3:
+            # Only extract if response is mostly just a wrapper (has data + maybe status/code/msg)
+            nested_data = response_data.get("data")
+            if nested_data is not None:
+                # Check if other keys are just metadata (status, code, msg, message, success)
+                metadata_keys = {"status", "code", "msg", "message", "success", "error", "errors"}
+                other_keys = set(response_data.keys()) - {"data"}
+                if other_keys.issubset(metadata_keys):
+                    return nested_data
+        
+        # CoinGecko format: {"data":{...}} but might have other important keys
+        # For now, return as-is if it's a complex structure
+        
+        return response_data
     
     def _detect_exchange(self) -> str:
         """Detect exchange name from URL"""
@@ -192,6 +239,8 @@ class RESTConnector(BaseConnector):
             return "coinbase"
         elif "kraken" in url_lower:
             return "kraken"
+        elif "kucoin" in url_lower:
+            return "kucoin"
         else:
             return "custom"
     
