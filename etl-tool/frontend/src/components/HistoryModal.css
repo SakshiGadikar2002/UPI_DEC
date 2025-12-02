@@ -80,7 +80,15 @@
 .history-modal-content {
   padding: 20px;
   overflow-y: auto;
+  overflow-x: auto;
   flex: 1;
+  /* Hide scrollbar */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+.history-modal-content::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
 }
 
 .history-empty {

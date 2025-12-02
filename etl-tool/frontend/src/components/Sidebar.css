@@ -67,6 +67,14 @@
   flex: 1;
   padding: 20px 0;
   overflow-y: auto;
+  overflow-x: auto;
+  /* Hide scrollbar */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+.sidebar-nav::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
 }
 
 .sidebar-item {

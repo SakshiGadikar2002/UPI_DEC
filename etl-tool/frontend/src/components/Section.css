@@ -250,6 +250,22 @@
   border: 1px solid #e0e0e0;
   border-radius: 6px;
   overflow: hidden;
+  /* Hide scrollbars for all scrollable elements */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+.websocket-messages-stream::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
+}
+
+.websocket-messages-stream * {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+.websocket-messages-stream *::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
 }
 
 .stream-header-info {
@@ -402,9 +418,17 @@
 .messages-stream-container {
   max-height: 70vh;
   overflow-y: auto;
+  overflow-x: auto;
   background: #fafafa;
   padding: 10px;
   scroll-behavior: smooth;
+  /* Hide scrollbar */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+.messages-stream-container::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
 }
 
 .stream-message-item {
@@ -804,9 +828,17 @@
 .messages-container {
   max-height: 400px;
   overflow-y: auto;
+  overflow-x: auto;
   border-radius: 6px;
   padding: 10px;
   background: #f5f5f5;
+  /* Hide scrollbar */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+.messages-container::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
 }
 
 .message-item {
@@ -834,7 +866,15 @@
   word-wrap: break-word;
   max-height: 200px;
   overflow-y: auto;
+  overflow-x: auto;
   color: #000000;
+  /* Hide scrollbar */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+.message-content::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
 }
 
 /* Quick Connect Section */

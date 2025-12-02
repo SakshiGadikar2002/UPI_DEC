@@ -289,9 +289,17 @@
 .stream-display {
   max-height: 600px;
   overflow-y: auto;
+  overflow-x: auto;
   border: none;
   border-radius: 0;
   background: transparent;
+  /* Hide scrollbar */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+.stream-display::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
 }
 
 .stream-list {

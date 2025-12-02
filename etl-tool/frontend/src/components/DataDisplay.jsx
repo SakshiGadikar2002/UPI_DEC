@@ -436,7 +436,7 @@ function DataDisplay({ sectionData }) {
 
       <div className="data-content">
         {finalShouldShowTable && isArray ? (
-          <div className="data-table-container" style={{ width: '100%', overflowX: 'auto' }}>
+          <div className="data-table-container">
             {tableData.length > rowsPerPage && (
               <div className="pagination-controls">
                 <button 
@@ -458,10 +458,10 @@ function DataDisplay({ sectionData }) {
                 </button>
               </div>
             )}
-            <table className="data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <table className="data-table">
               <thead>
-                <tr style={{ backgroundColor: '#f5f5f5', position: 'sticky', top: 0 }}>
-                  <th className="row-number" style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd' }}>#</th>
+                <tr>
+                  <th className="row-number">#</th>
                   {tableData && tableData[0] ? (
                     // Show all columns from data, but prioritize key columns
                     (() => {
@@ -472,20 +472,28 @@ function DataDisplay({ sectionData }) {
                         ...priorityKeys.filter(k => allKeys.includes(k)),
                         ...allKeys.filter(k => !priorityKeys.includes(k))
                       ]
-                      return orderedKeys.map((key) => (
-                        <th key={key} style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', fontWeight: 'bold' }}>
-                          {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
-                        </th>
-                      ))
+                      return orderedKeys.map((key) => {
+                        const isDataColumn = key === 'processed_data' || key === 'raw_data'
+                        const isIdColumn = key === 'session_id' || key === 'source_id'
+                        return (
+                          <th 
+                            key={key} 
+                            className={isDataColumn ? 'data-column-header' : isIdColumn ? 'id-column-header' : ''}
+                            data-column={key}
+                          >
+                            {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                          </th>
+                        )
+                      })
                     })()
                   ) : (
                     // Default columns if no data structure
                     <>
-                      <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', fontWeight: 'bold' }}>Timestamp</th>
-                      <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', fontWeight: 'bold' }}>Session ID</th>
-                      <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', fontWeight: 'bold' }}>Source ID</th>
-                      <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', fontWeight: 'bold' }}>Processed Data</th>
-                      <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', fontWeight: 'bold' }}>Raw Data</th>
+                      <th>Timestamp</th>
+                      <th className="id-column-header">Session ID</th>
+                      <th className="id-column-header">Source ID</th>
+                      <th className="data-column-header">Processed Data</th>
+                      <th className="data-column-header">Raw Data</th>
                     </>
                   )}
                 </tr>
@@ -515,7 +523,7 @@ function DataDisplay({ sectionData }) {
                         onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f9f9f9'}
                         onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
                       >
-                        <td className="row-number" style={{ padding: '8px', border: '1px solid #ddd', textAlign: 'center' }}>
+                        <td className="row-number">
                           {actualIndex + 1}
                         </td>
                         {rowKeys.map((key) => {
@@ -530,11 +538,11 @@ function DataDisplay({ sectionData }) {
                               // Format JSON objects nicely
                               try {
                                 displayValue = JSON.stringify(value, null, 2)
-                                isLongText = displayValue.length > 200
+                                isLongText = displayValue.length > 500
                               } catch {
                                 displayValue = String(value)
                               }
-                            } else if (typeof value === 'string' && value.length > 200) {
+                            } else if (typeof value === 'string' && value.length > 500) {
                               // Truncate very long strings
                               displayValue = value
                               isLongText = true
@@ -544,32 +552,33 @@ function DataDisplay({ sectionData }) {
                             
                             // Special handling for processed_data and raw_data columns
                             const isDataColumn = key === 'processed_data' || key === 'raw_data'
-                            const isSessionId = key === 'session_id'
+                            const isSessionId = key === 'session_id' || key === 'source_id'
                             
-                            // Truncate session_id for display
-                            if (isSessionId && displayValue && displayValue.length > 20) {
-                              displayValue = displayValue.substring(0, 20) + '...'
+                            // Truncate session_id and source_id for display
+                            if (isSessionId && displayValue && displayValue.length > 16) {
+                              displayValue = displayValue.substring(0, 16) + '...'
+                            }
+                            
+                            // Determine cell class based on column type
+                            let cellClassName = ''
+                            if (isDataColumn) {
+                              cellClassName = 'data-column'
+                            } else if (isSessionId) {
+                              cellClassName = 'id-column'
                             }
                             
                             return (
                               <td 
-                                key={key} 
-                                style={{ 
-                                  padding: '8px',
-                                  border: '1px solid #ddd',
-                                  maxWidth: isDataColumn ? '400px' : (isSessionId ? '150px' : '200px'),
-                                  overflow: 'auto',
-                                  wordBreak: 'break-word',
-                                  fontSize: '0.85em',
-                                  verticalAlign: 'top'
-                                }}
+                                key={key}
+                                data-column={key}
+                                className={cellClassName}
                               >
                                 {isLongText && !isDataColumn ? (
                                   <details style={{ cursor: 'pointer' }}>
                                     <summary style={{ color: '#2196F3', cursor: 'pointer' }}>
                                       {displayValue.substring(0, 100)}... (Click to expand)
                                     </summary>
-                                    <pre style={{ 
+                                    <pre className="scrollable-content" style={{ 
                                       margin: '5px 0 0 0', 
                                       whiteSpace: 'pre-wrap',
                                       fontFamily: 'monospace',
@@ -599,12 +608,12 @@ function DataDisplay({ sectionData }) {
                                     }}>{displayValue}</pre>
                                   </details>
                                 ) : (
-                                  <pre style={{ 
+                                  <pre className="scrollable-content" style={{ 
                                     margin: 0, 
                                     whiteSpace: 'pre-wrap',
                                     fontFamily: isDataColumn ? 'monospace' : 'inherit',
                                     fontSize: isDataColumn ? '0.75em' : '0.85em',
-                                    maxHeight: '200px',
+                                    maxHeight: isDataColumn ? '200px' : 'none',
                                     overflow: 'auto'
                                   }}>{displayValue}</pre>
                                 )}
@@ -651,7 +660,7 @@ function DataDisplay({ sectionData }) {
           </div>
         ) : finalShouldShowTable ? (
           // For real-time streams, show empty table structure
-          <div className="data-table-container" style={{ width: '100%', overflowX: 'auto' }}>
+          <div className="data-table-container">
             <table className="data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ backgroundColor: '#f5f5f5', position: 'sticky', top: 0 }}>

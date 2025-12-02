@@ -155,6 +155,13 @@
   padding: 20px;
   max-height: 600px;
   overflow: auto;
+  /* Hide scrollbar */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+.data-content::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
 }
 
 .data-table-container {
@@ -164,15 +171,26 @@
   -webkit-backface-visibility: hidden;
   backface-visibility: hidden;
   overflow-x: auto;
+  overflow-y: auto;
+  max-height: 600px;
+  width: 100%;
+  /* Hide scrollbar */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+.data-table-container::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
 }
 
 .data-table {
-  /* Prevent flickering during updates */
-  table-layout: fixed;
+  /* Use auto layout for better column distribution */
+  table-layout: auto;
   width: 100%;
-  width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 0.75rem;
+  min-width: 100%;
 }
 
 .data-table thead {
@@ -183,22 +201,93 @@
 }
 
 .data-table th {
-  padding: 8px 10px;
+  padding: 10px 12px;
   text-align: left;
   font-weight: 600;
   color: #000000;
   white-space: nowrap;
   font-size: 0.75rem;
+  border-bottom: 2px solid #e0e0e0;
+  min-width: 80px;
+}
+
+/* Specific column widths for better layout */
+.data-table th.row-number {
+  width: 60px;
+  min-width: 60px;
+  max-width: 60px;
+  text-align: center;
+}
+
+.data-table th:nth-child(2) {
+  /* Timestamp column */
+  width: 180px;
+  min-width: 150px;
+}
+
+.data-table th:nth-child(3),
+.data-table th:nth-child(4) {
+  /* Session ID, Source ID columns */
+  width: 140px;
+  min-width: 120px;
+}
+
+.data-table th:has-text("Processed Data"),
+.data-table th:has-text("Raw Data") {
+  width: 250px;
+  min-width: 200px;
+  max-width: 400px;
 }
 
 .data-table td {
-  padding: 6px 10px;
+  padding: 8px 12px;
   color: #000000;
-  max-width: 300px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-size: 0.75rem;
+  border-bottom: 1px solid #f0f0f0;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* Row number column */
+.data-table td.row-number {
+  width: 60px;
+  min-width: 60px;
+  max-width: 60px;
+  text-align: center;
+  background: #fafafa;
+  font-weight: 500;
+}
+
+/* Timestamp column */
+.data-table td:nth-child(2) {
+  width: 180px;
+  min-width: 150px;
+  white-space: nowrap;
+}
+
+/* Session ID and Source ID columns */
+.data-table td:nth-child(3),
+.data-table td:nth-child(4) {
+  width: 140px;
+  min-width: 120px;
+  font-family: monospace;
+  font-size: 0.7rem;
+}
+
+/* Processed Data and Raw Data columns - allow wrapping */
+.data-table td:has-text("processed_data"),
+.data-table td:has-text("raw_data"),
+.data-table td[data-column="processed_data"],
+.data-table td[data-column="raw_data"] {
+  max-width: 400px;
+  min-width: 200px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'Courier New', monospace;
+  font-size: 0.7rem;
+  line-height: 1.4;
+  max-height: 150px;
+  overflow-y: auto;
 }
 
 .data-table tbody tr:hover {
@@ -220,6 +309,98 @@
 
 .data-table tbody tr.current-row:hover {
   background: #e8e8e8 !important;
+}
+
+/* Column-specific header styles */
+.data-table th.data-column-header {
+  width: 300px;
+  min-width: 250px;
+  max-width: 400px;
+}
+
+.data-table th.id-column-header {
+  width: 140px;
+  min-width: 120px;
+  max-width: 180px;
+}
+
+/* Column-specific cell styles */
+.data-table td.data-column {
+  max-width: 400px;
+  min-width: 200px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'Courier New', monospace;
+  font-size: 0.7rem;
+  line-height: 1.4;
+  max-height: 150px;
+  overflow-y: auto;
+  overflow-x: auto;
+  background: #fafafa;
+  padding: 10px;
+  vertical-align: top;
+  /* Hide scrollbar */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+.data-table td.data-column::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
+}
+
+.data-table td.id-column {
+  font-family: 'Courier New', monospace;
+  font-size: 0.7rem;
+  color: #666;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.data-table td .json-text {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.data-table td .truncated-text {
+  color: #666;
+  font-style: italic;
+}
+
+
+/* Global scrollbar hiding for all scrollable elements in data display */
+.data-display * {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+.data-display *::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
+}
+
+/* Specific scrollable content classes */
+.scrollable-content {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+.scrollable-content::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
+}
+
+/* Responsive adjustments */
+@media (max-width: 1200px) {
+  .data-table th:nth-child(2),
+  .data-table td:nth-child(2) {
+    width: 150px;
+    min-width: 120px;
+  }
+  
+  .data-table td.data-column {
+    max-width: 300px;
+    min-width: 150px;
+  }
 }
 
 .data-table .row-number {
@@ -292,6 +473,13 @@
 .parse-errors-list {
   max-height: 200px;
   overflow-y: auto;
+  /* Hide scrollbar */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+.parse-errors-list::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
 }
 
 .parse-error-item {
@@ -347,6 +535,25 @@
   border-radius: 6px;
   padding: 15px;
   overflow-x: auto;
+  overflow-y: auto;
+  max-height: 600px;
+  /* Hide scrollbar */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+.data-json::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
+}
+
+.data-json pre {
+  /* Hide scrollbar in pre elements */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+.data-json pre::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
 }
 
 .data-json pre {
@@ -355,6 +562,13 @@
   font-size: 0.85rem;
   line-height: 1.5;
   color: #000000;
+  /* Hide scrollbar */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+.data-json pre::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
 }
 
 /* Charts Section Styles */
