@@ -96,7 +96,7 @@ function APISection({ data, setData }) {
       setBackendOnline(isOnline)
       setCheckingBackend(false)
       if (!isOnline) {
-        setError('Backend server is not running. Please start the backend server at http://localhost:8000')
+        setError('Backend server is not running. Please start the backend server.')
       }
     }
     verifyBackend()
@@ -286,7 +286,7 @@ function APISection({ data, setData }) {
     console.log(`🔄 Fetching data from api_connector_data table for connector: ${idToUse}`)
     
     try {
-      const url = `http://localhost:8000/api/connectors/${idToUse}/data?limit=1000&sort_by=timestamp&sort_order=-1`
+      const url = `/api/connectors/${idToUse}/data?limit=1000&sort_by=timestamp&sort_order=-1`
       console.log(`📡 API Call: GET ${url}`)
       
       const dataResponse = await fetch(url)
@@ -449,7 +449,7 @@ function APISection({ data, setData }) {
     // Check backend before proceeding
     const isOnline = await checkBackendHealth()
     if (!isOnline) {
-      setError('Backend server is not running. Please start the backend server at http://localhost:8000')
+      setError('Backend server is not running. Please start the backend server.')
       setBackendOnline(false)
       return
     }
@@ -514,7 +514,7 @@ function APISection({ data, setData }) {
       }
 
       // Create connector
-      const createResponse = await fetch('http://localhost:8000/api/connectors', {
+      const createResponse = await fetch('/api/connectors', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -532,7 +532,7 @@ function APISection({ data, setData }) {
 
       // If real-time streaming, start the connector
       if (ingestionMode === 'Real-Time Streaming (New)') {
-        const startResponse = await fetch(`http://localhost:8000/api/connectors/${connector.connector_id}/start`, {
+        const startResponse = await fetch(`/api/connectors/${connector.connector_id}/start`, {
           method: 'POST'
         })
 
@@ -787,7 +787,7 @@ function APISection({ data, setData }) {
     if (!connectorId) return
     
     try {
-      const response = await fetch(`http://localhost:8000/api/connectors/${connectorId}/stop`, {
+      const response = await fetch(`/api/connectors/${connectorId}/stop`, {
         method: 'POST'
       })
       
@@ -1117,7 +1117,7 @@ function APISection({ data, setData }) {
                         onClick={async () => {
                           try {
                             console.log('📊 Checking database count for connector:', connectorId)
-                            const response = await fetch(`http://localhost:8000/api/connectors/${connectorId}/data?limit=5`)
+                            const response = await fetch(`/api/connectors/${connectorId}/data?limit=5`)
                             const result = await response.json()
                             console.log('📊 Database check result:', result)
                             alert(`Total records in api_connector_data table: ${result.total}\nFetched in sample: ${result.count}\n\nNow fetching ALL data to display...`)

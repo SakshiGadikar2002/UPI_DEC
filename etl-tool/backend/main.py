@@ -1,5 +1,7 @@
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any, Set
 import uvicorn
@@ -10,6 +12,8 @@ from contextlib import asynccontextmanager
 import uuid
 import asyncio
 import logging
+import os
+from pathlib import Path
 
 from etl.extractor import Extractor
 from etl.transformer import Transformer
@@ -40,14 +44,26 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="ETL Tool API", version="1.0.0", lifespan=lifespan)
 
-# CORS middleware
+# CORS middleware - allow all origins since we're serving from same port
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173", "http://localhost:5174"],
+    allow_origins=["*"],  # Allow all origins since frontend is served from same port
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Get the path to frontend dist directory
+# Backend is in etl-tool/backend/, frontend dist is in etl-tool/frontend/dist/
+BASE_DIR = Path(__file__).resolve().parent.parent
+FRONTEND_DIST = BASE_DIR / "frontend" / "dist"
+
+# Mount static files (CSS, JS, images, etc.)
+if FRONTEND_DIST.exists():
+    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="assets")
+    logger.info(f"Static files mounted from: {FRONTEND_DIST}")
+else:
+    logger.warning(f"Frontend dist directory not found at: {FRONTEND_DIST}")
 
 # Initialize job manager
 job_manager = JobManager()
@@ -230,6 +246,11 @@ class JobStatusResponse(BaseModel):
 
 @app.get("/")
 async def root():
+    """Serve frontend index.html or return API info"""
+    # If frontend dist exists, serve it; otherwise return API info
+    index_path = FRONTEND_DIST / "index.html"
+    if index_path.exists():
+        return FileResponse(str(index_path))
     return {"message": "ETL Tool API", "version": "1.0.0"}
 
 
@@ -1372,6 +1393,28 @@ async def websocket_endpoint(websocket: WebSocket):
     finally:
         connection_manager.disconnect(websocket)
         logger.info("WebSocket connection closed")
+
+
+# Catch-all route for frontend client-side routing
+# This MUST be at the end, after all API routes, so it doesn't intercept API calls
+@app.get("/{full_path:path}")
+async def serve_frontend(full_path: str):
+    """Serve frontend for client-side routing (catch-all route)"""
+    # Don't serve frontend for API routes (shouldn't reach here due to route order, but safety check)
+    if full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="API endpoint not found")
+    
+    # Check if it's a static file request (like favicon, etc.)
+    file_path = FRONTEND_DIST / full_path
+    if file_path.exists() and file_path.is_file():
+        return FileResponse(str(file_path))
+    
+    # For all other routes, serve index.html (for client-side routing)
+    index_path = FRONTEND_DIST / "index.html"
+    if index_path.exists():
+        return FileResponse(str(index_path))
+    
+    raise HTTPException(status_code=404, detail="Not found")
 
 
 if __name__ == "__main__":

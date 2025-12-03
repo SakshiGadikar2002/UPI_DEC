@@ -29,8 +29,9 @@ import './RealtimeStream.css';
 import { ChartIcon, ListIcon, CompareIcon, PlayIcon, StopIcon, ClearIcon, ExportIcon } from './Icons.jsx';
 import { OKX_CONFIG, BINANCE_CONFIG } from '../utils/websocketConfig';
 
-const API_BASE_URL = 'http://localhost:5000';
-const SOCKET_URL = 'http://localhost:5000';
+// Use relative URLs - works when frontend is served from same port as backend
+const API_BASE_URL = '';
+const SOCKET_URL = window.location.origin; // For socket.io, use current origin
 
 // Get instruments from config based on exchange - normalize to symbol format (BTCUSDT)
 const getInstrumentsFromConfig = (exchange) => {
