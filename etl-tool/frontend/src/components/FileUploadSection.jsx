@@ -23,7 +23,7 @@ function FileUploadSection({ data, setData }) {
       setBackendOnline(isOnline)
       setCheckingBackend(false)
       if (!isOnline) {
-        setError('Backend server is not running. Please start the backend server at http://localhost:8000')
+        setError('Backend server is not running. Please start the backend server.')
       }
     }
     verifyBackend()
@@ -49,7 +49,7 @@ function FileUploadSection({ data, setData }) {
     // Check backend before proceeding
     const isOnline = await checkBackendHealth()
     if (!isOnline) {
-      setError('Backend server is not running. Please start the backend server at http://localhost:8000')
+      setError('Backend server is not running. Please start the backend server.')
       setBackendOnline(false)
       return
     }

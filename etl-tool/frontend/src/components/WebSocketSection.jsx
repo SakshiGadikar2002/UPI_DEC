@@ -58,7 +58,7 @@ function WebSocketSection({ data, setData }) {
       setBackendOnline(isOnline)
       setCheckingBackend(false)
       if (!isOnline) {
-        setError('Backend server is not running. Please start the backend server at http://localhost:8000')
+        setError('Backend server is not running. Please start the backend server.')
       }
     }
     verifyBackend()
@@ -75,7 +75,7 @@ function WebSocketSection({ data, setData }) {
         return
       }
       try {
-        const response = await fetch('http://localhost:8000/api/postgres/status')
+        const response = await fetch('/api/postgres/status')
         const data = await response.json()
         setPostgresConnected(data.status === 'connected')
       } catch (error) {
@@ -115,7 +115,7 @@ function WebSocketSection({ data, setData }) {
       }
 
       // Save immediately (fire and forget - don't wait for response)
-      fetch('http://localhost:8000/api/websocket/save', {
+      fetch('/api/websocket/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(messageData)
@@ -164,7 +164,7 @@ function WebSocketSection({ data, setData }) {
           }
         }
 
-        const response = await fetch('http://localhost:8000/api/websocket/save-batch', {
+        const response = await fetch('/api/websocket/save-batch', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(batchData)
@@ -202,7 +202,7 @@ function WebSocketSection({ data, setData }) {
     // Check backend before proceeding
     const isOnline = await checkBackendHealth()
     if (!isOnline) {
-      setError('Backend server is not running. Please start the backend server at http://localhost:8000')
+      setError('Backend server is not running. Please start the backend server.')
       setBackendOnline(false)
       return
     }
