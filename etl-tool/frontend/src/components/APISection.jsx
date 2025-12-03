@@ -11,6 +11,7 @@ function APISection({ data, setData }) {
   const [queryParams, setQueryParams] = useState('{"limit": 100, "page": 1}\n\nlimit=100&page=1')
   const [authentication, setAuthentication] = useState('None')
   const [apiKey, setApiKey] = useState('')
+  const [apiKeyHeader, setApiKeyHeader] = useState('X-API-Key')
   const [apiSecret, setApiSecret] = useState('')
   const [bearerToken, setBearerToken] = useState('')
   const [username, setUsername] = useState('')
@@ -55,6 +56,7 @@ function APISection({ data, setData }) {
       queryParams: '',
       authentication: 'API Key',
       apiKey: 'your-api-key-here',
+      apiKeyHeader: 'X-API-Key',
       description: 'Example API with API Key authentication'
     },
     'HMAC': {
@@ -97,6 +99,7 @@ function APISection({ data, setData }) {
       setBearerToken('')
       setUsername('')
       setPassword('')
+      setApiKeyHeader('X-API-Key')
       
       // Then set the example values
       setApiUrl(example.url)
@@ -107,6 +110,7 @@ function APISection({ data, setData }) {
       
       // Set credentials only if they exist in the example
       if (example.apiKey) setApiKey(example.apiKey)
+      if (example.apiKeyHeader) setApiKeyHeader(example.apiKeyHeader)
       if (example.apiSecret) setApiSecret(example.apiSecret)
       if (example.bearerToken) setBearerToken(example.bearerToken)
       if (example.username) setUsername(example.username)
@@ -581,6 +585,11 @@ function APISection({ data, setData }) {
           setLoading(false)
           return
         }
+        if (!apiKeyHeader || apiKeyHeader.trim() === '') {
+          setError('API Key header name is required. Example: X-API-Key or X-CMC_PRO_API_KEY.')
+          setLoading(false)
+          return
+        }
       }
       if (authentication === 'HMAC') {
         if (!apiKey || apiKey.trim() === '' || isPlaceholder(apiKey) || 
@@ -625,12 +634,19 @@ function APISection({ data, setData }) {
       // Double-check here as a safety measure
       if (authentication === 'API Key') {
         const trimmedKey = apiKey.trim()
+        const trimmedHeader = apiKeyHeader.trim()
         if (!trimmedKey || trimmedKey === '') {
           setError('API Key cannot be empty. Please enter a valid API key.')
           setLoading(false)
           return
         }
+        if (!trimmedHeader || trimmedHeader === '') {
+          setError('API Key header cannot be empty. Please provide a header name.')
+          setLoading(false)
+          return
+        }
         connectorData.api_key = trimmedKey
+        connectorData.api_key_header = trimmedHeader
       } else if (authentication === 'HMAC') {
         const trimmedKey = apiKey.trim()
         const trimmedSecret = apiSecret.trim()
@@ -1237,9 +1253,20 @@ function APISection({ data, setData }) {
                 className="url-input"
                 disabled={!backendOnline}
               />
+            <div style={{ marginTop: '10px' }}>
+              <label>API Key Header Name <span style={{ color: '#f44336' }}>*</span></label>
+              <input
+                type="text"
+                value={apiKeyHeader}
+                onChange={(e) => setApiKeyHeader(e.target.value)}
+                placeholder="e.g., X-API-Key or X-CMC_PRO_API_KEY"
+                className="url-input"
+                disabled={!backendOnline}
+              />
+            </div>
               <small style={{ color: '#666', fontSize: '0.85rem', marginTop: '5px', display: 'block' }}>
                 💡 <strong>Required:</strong> You must enter a valid API key. Placeholder values like "your-api-key-here" are not accepted.<br/>
-                <strong>How it works:</strong> API Key will be added to headers as <code>X-API-Key</code> or <code>x-api-key</code>.<br/>
+              <strong>How it works:</strong> API Key will be added to headers using the name you provide (default <code>X-API-Key</code>).<br/>
                 <strong>💡 Tip:</strong> Don't have an API key? Switch to <strong>"None"</strong> or <strong>"Basic Auth"</strong> to test without real credentials!
               </small>
             </div>
