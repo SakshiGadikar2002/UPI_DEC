@@ -36,6 +36,83 @@ function APISection({ data, setData }) {
   const lastStateDataRef = useRef(null) // Track last state data to prevent unnecessary updates
   const lastDataReceivedTimeRef = useRef(null) // Track when data was last received
   const streamHealthCheckRef = useRef(null) // Reference for stream health check interval
+  const [authExamplesExpanded, setAuthExamplesExpanded] = useState(false)
+
+  // Authentication test examples - defined early to ensure availability
+  const authTestExamples = {
+    'None': {
+      url: 'https://httpbin.org/get',
+      method: 'GET',
+      headers: '',
+      queryParams: '',
+      authentication: 'None',
+      description: 'HTTPBin - Public API (no auth required)'
+    },
+    'API Key': {
+      url: 'https://api.example.com/data',
+      method: 'GET',
+      headers: '{"X-API-Key": "your-api-key-here"}',
+      queryParams: '',
+      authentication: 'API Key',
+      apiKey: 'your-api-key-here',
+      description: 'Example API with API Key authentication'
+    },
+    'HMAC': {
+      url: 'https://api.binance.com/api/v3/account',
+      method: 'GET',
+      headers: '',
+      queryParams: '',
+      authentication: 'HMAC',
+      apiKey: 'your-binance-api-key',
+      apiSecret: 'your-binance-api-secret',
+      description: 'Binance API - Requires valid API key and secret'
+    },
+    'Bearer Token': {
+      url: 'https://api.github.com/user',
+      method: 'GET',
+      headers: '',
+      queryParams: '',
+      authentication: 'Bearer Token',
+      bearerToken: 'ghp_your_github_token_here',
+      description: 'GitHub API - Requires personal access token'
+    },
+    'Basic Auth': {
+      url: 'https://httpbin.org/basic-auth/user/passwd',
+      method: 'GET',
+      headers: '',
+      queryParams: '',
+      authentication: 'Basic Auth',
+      username: 'user',
+      password: 'passwd',
+      description: 'HTTPBin Basic Auth Test - Public test endpoint'
+    }
+  }
+
+  const loadAuthExample = (authType) => {
+    const example = authTestExamples[authType]
+    if (example) {
+      // Clear all credentials first
+      setApiKey('')
+      setApiSecret('')
+      setBearerToken('')
+      setUsername('')
+      setPassword('')
+      
+      // Then set the example values
+      setApiUrl(example.url)
+      setHttpMethod(example.method)
+      setHeaders(example.headers || '')
+      setQueryParams(example.queryParams || '')
+      setAuthentication(example.authentication)
+      
+      // Set credentials only if they exist in the example
+      if (example.apiKey) setApiKey(example.apiKey)
+      if (example.apiSecret) setApiSecret(example.apiSecret)
+      if (example.bearerToken) setBearerToken(example.bearerToken)
+      if (example.username) setUsername(example.username)
+      if (example.password) setPassword(example.password)
+    }
+  }
 
   // Quick Connect configurations
   const quickConnectOptions = [
@@ -485,6 +562,50 @@ function APISection({ data, setData }) {
     setWsConnected(false)
 
     try {
+      // Validate authentication credentials before proceeding (check for empty strings and placeholder values)
+      const isPlaceholder = (value) => {
+        if (!value || value.trim() === '') return true
+        const lower = value.toLowerCase().trim()
+        return lower.includes('your-') || 
+               lower.includes('enter ') || 
+               lower.includes('example') ||
+               lower === 'your-api-key-here' ||
+               lower === 'your-binance-api-key' ||
+               lower === 'your-binance-api-secret' ||
+               lower === 'ghp_your_github_token_here'
+      }
+
+      if (authentication === 'API Key') {
+        if (!apiKey || apiKey.trim() === '' || isPlaceholder(apiKey)) {
+          setError('API Key is required for API Key authentication. Please enter a valid API key (not a placeholder).')
+          setLoading(false)
+          return
+        }
+      }
+      if (authentication === 'HMAC') {
+        if (!apiKey || apiKey.trim() === '' || isPlaceholder(apiKey) || 
+            !apiSecret || apiSecret.trim() === '' || isPlaceholder(apiSecret)) {
+          setError('API Key and Secret are required for HMAC authentication. Please enter valid credentials (not placeholders).')
+          setLoading(false)
+          return
+        }
+      }
+      if (authentication === 'Bearer Token') {
+        if (!bearerToken || bearerToken.trim() === '' || isPlaceholder(bearerToken)) {
+          setError('Bearer Token is required for Bearer Token authentication. Please enter a valid bearer token (not a placeholder).')
+          setLoading(false)
+          return
+        }
+      }
+      if (authentication === 'Basic Auth') {
+        // Basic Auth example values are valid (user/passwd for httpbin)
+        if (!username || username.trim() === '' || !password || password.trim() === '') {
+          setError('Username and Password are required for Basic Auth. Please enter both credentials.')
+          setLoading(false)
+          return
+        }
+      }
+
       // Parse headers and query params
       const requestHeaders = parseHeaders(headers)
       const queryParamsObj = parseQueryParams(queryParams)
@@ -500,18 +621,55 @@ function APISection({ data, setData }) {
         polling_interval: pollingInterval
       }
       
-      // Add credentials based on auth type
-      if (authentication === 'API Key' && apiKey) {
-        connectorData.api_key = apiKey
-      } else if (authentication === 'HMAC' && apiKey && apiSecret) {
-        connectorData.api_key = apiKey
-        connectorData.api_secret = apiSecret
-      } else if (authentication === 'Bearer Token' && bearerToken) {
-        connectorData.bearer_token = bearerToken
-      } else if (authentication === 'Basic Auth' && username && password) {
-        connectorData.username = username
-        connectorData.password = password
+      // Add credentials based on auth type (validation already ensured they exist and are not placeholders)
+      // Double-check here as a safety measure
+      if (authentication === 'API Key') {
+        const trimmedKey = apiKey.trim()
+        if (!trimmedKey || trimmedKey === '') {
+          setError('API Key cannot be empty. Please enter a valid API key.')
+          setLoading(false)
+          return
+        }
+        connectorData.api_key = trimmedKey
+      } else if (authentication === 'HMAC') {
+        const trimmedKey = apiKey.trim()
+        const trimmedSecret = apiSecret.trim()
+        if (!trimmedKey || !trimmedSecret) {
+          setError('API Key and Secret cannot be empty. Please enter valid credentials.')
+          setLoading(false)
+          return
+        }
+        connectorData.api_key = trimmedKey
+        connectorData.api_secret = trimmedSecret
+      } else if (authentication === 'Bearer Token') {
+        const trimmedToken = bearerToken.trim()
+        if (!trimmedToken || trimmedToken === '') {
+          setError('Bearer Token cannot be empty. Please enter a valid bearer token.')
+          setLoading(false)
+          return
+        }
+        connectorData.bearer_token = trimmedToken
+      } else if (authentication === 'Basic Auth') {
+        const trimmedUser = username.trim()
+        const trimmedPass = password.trim()
+        if (!trimmedUser || !trimmedPass) {
+          setError('Username and Password cannot be empty. Please enter valid credentials.')
+          setLoading(false)
+          return
+        }
+        connectorData.username = trimmedUser
+        connectorData.password = trimmedPass
       }
+      
+      // Log the connector data for debugging (without sensitive info)
+      console.log('Creating connector with:', {
+        ...connectorData,
+        api_key: connectorData.api_key ? '***' : undefined,
+        api_secret: connectorData.api_secret ? '***' : undefined,
+        bearer_token: connectorData.bearer_token ? '***' : undefined,
+        username: connectorData.username ? '***' : undefined,
+        password: connectorData.password ? '***' : undefined
+      })
 
       // Create connector
       const createResponse = await fetch('/api/connectors', {
@@ -523,8 +681,30 @@ function APISection({ data, setData }) {
       })
 
       if (!createResponse.ok) {
-        const errorData = await createResponse.json()
-        throw new Error(errorData.detail || 'Failed to create connector')
+        let errorMessage = 'Failed to create connector'
+        try {
+          const errorData = await createResponse.json()
+          // Handle Pydantic validation errors
+          if (errorData.detail) {
+            if (Array.isArray(errorData.detail)) {
+              // Pydantic validation errors come as an array
+              errorMessage = errorData.detail.map(err => {
+                if (typeof err === 'object' && err.loc && err.msg) {
+                  return `${err.loc.join('.')}: ${err.msg}`
+                }
+                return String(err)
+              }).join(', ')
+            } else {
+              errorMessage = errorData.detail
+            }
+          }
+        } catch (e) {
+          // If JSON parsing fails, use default message
+          errorMessage = `HTTP ${createResponse.status}: ${createResponse.statusText}`
+        }
+        setError(errorMessage)
+        setLoading(false)
+        return
       }
 
       const connector = await createResponse.json()
@@ -951,73 +1131,174 @@ function APISection({ data, setData }) {
           </div>
 
           <div className="input-group">
-            <label>Authentication</label>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <label>Authentication</label>
+              <button
+                type="button"
+                onClick={() => setAuthExamplesExpanded(!authExamplesExpanded)}
+                style={{
+                  padding: '4px 8px',
+                  fontSize: '0.75rem',
+                  backgroundColor: '#f0f0f0',
+                  border: '1px solid #ddd',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  color: '#666'
+                }}
+                disabled={!backendOnline}
+              >
+                {authExamplesExpanded ? '▼ Hide' : '▶ Show'} Test Examples
+              </button>
+            </div>
             <select
               value={authentication}
               onChange={(e) => setAuthentication(e.target.value)}
               className="url-input"
               disabled={!backendOnline}
             >
-              <option value="None">None</option>
-              <option value="API Key">API Key</option>
-              <option value="HMAC">HMAC</option>
-              <option value="Bearer Token">Bearer Token</option>
-              <option value="Basic Auth">Basic Auth</option>
+              <option value="None">None - No authentication required</option>
+              <option value="API Key">API Key - Simple API key in headers</option>
+              <option value="HMAC">HMAC - HMAC-SHA256 signature (Binance, OKX)</option>
+              <option value="Bearer Token">Bearer Token - OAuth 2.0 Bearer token</option>
+              <option value="Basic Auth">Basic Auth - HTTP Basic Authentication</option>
             </select>
+            {authExamplesExpanded && (
+              <div style={{ 
+                marginTop: '10px', 
+                padding: '12px', 
+                backgroundColor: '#f9f9f9', 
+                borderRadius: '6px',
+                border: '1px solid #e0e0e0'
+              }}>
+                <div style={{ fontSize: '0.9rem', fontWeight: 'bold', marginBottom: '10px', color: '#333' }}>
+                  🧪 Quick Test Examples - Click to load configuration:
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {Object.entries(authTestExamples).map(([authType, example]) => (
+                    <button
+                      key={authType}
+                      type="button"
+                      onClick={() => loadAuthExample(authType)}
+                      disabled={!backendOnline}
+                      style={{
+                        padding: '8px 12px',
+                        textAlign: 'left',
+                        backgroundColor: authentication === authType ? '#e3f2fd' : '#fff',
+                        border: `1px solid ${authentication === authType ? '#2196F3' : '#ddd'}`,
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '0.85rem',
+                        transition: 'all 0.2s'
+                      }}
+                      onMouseEnter={(e) => {
+                        if (authentication !== authType) {
+                          e.target.style.backgroundColor = '#f5f5f5'
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (authentication !== authType) {
+                          e.target.style.backgroundColor = '#fff'
+                        }
+                      }}
+                    >
+                      <div style={{ fontWeight: 'bold', color: '#2196F3', marginBottom: '2px' }}>
+                        {authType} {authentication === authType && '✓'}
+                      </div>
+                      <div style={{ color: '#666', fontSize: '0.8rem' }}>
+                        {example.description}
+                      </div>
+                      <div style={{ color: '#999', fontSize: '0.75rem', marginTop: '2px', fontFamily: 'monospace' }}>
+                        {example.url}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {authentication === 'None' && (
+              <small style={{ color: '#666', fontSize: '0.85rem', marginTop: '5px', display: 'block' }}>
+                {/* 💡 <strong>No Authentication:</strong> Use this for public APIs that don't require authentication.<br/>
+                <strong>Test URLs:</strong><br/>
+                • Binance Public: <code>https://api.binance.com/api/v3/ticker/price</code><br/>
+                • CoinGecko: <code>https://api.coingecko.com/api/v3/global</code><br/>
+                • HTTPBin: <code>https://httpbin.org/get</code> */}
+              </small>
+            )}
           </div>
 
           {authentication === 'API Key' && (
             <div className="input-group">
-              <label>API Key</label>
+              <label>API Key <span style={{ color: '#f44336' }}>*</span></label>
               <input
                 type="password"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
-                placeholder="Enter your API key"
+                placeholder="Enter your real API key (required)"
                 className="url-input"
                 disabled={!backendOnline}
               />
+              <small style={{ color: '#666', fontSize: '0.85rem', marginTop: '5px', display: 'block' }}>
+                💡 <strong>Required:</strong> You must enter a valid API key. Placeholder values like "your-api-key-here" are not accepted.<br/>
+                <strong>How it works:</strong> API Key will be added to headers as <code>X-API-Key</code> or <code>x-api-key</code>.<br/>
+                <strong>💡 Tip:</strong> Don't have an API key? Switch to <strong>"None"</strong> or <strong>"Basic Auth"</strong> to test without real credentials!
+              </small>
             </div>
           )}
 
           {authentication === 'HMAC' && (
             <>
               <div className="input-group">
-                <label>API Key</label>
+                <label>API Key <span style={{ color: '#f44336' }}>*</span></label>
                 <input
                   type="password"
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="Enter your API key"
+                  placeholder="Enter your real API key (required)"
                   className="url-input"
                   disabled={!backendOnline}
                 />
               </div>
               <div className="input-group">
-                <label>API Secret</label>
+                <label>API Secret <span style={{ color: '#f44336' }}>*</span></label>
                 <input
                   type="password"
                   value={apiSecret}
                   onChange={(e) => setApiSecret(e.target.value)}
-                  placeholder="Enter your API secret"
+                  placeholder="Enter your real API secret (required)"
                   className="url-input"
                   disabled={!backendOnline}
                 />
               </div>
+              <small style={{ color: '#666', fontSize: '0.85rem', marginTop: '5px', display: 'block' }}>
+                💡 <strong>Required:</strong> Both API Key and Secret are required. Placeholder values are not accepted.<br/>
+                <strong>How it works:</strong> HMAC-SHA256 signature authentication used by Binance, OKX, and other crypto exchanges.<br/>
+                <strong>Test URLs:</strong><br/>
+                • Binance: <code>https://api.binance.com/api/v3/account</code> (requires valid API key/secret)<br/>
+                • OKX: <code>https://www.okx.com/api/v5/account/balance</code> (requires valid API key/secret)<br/>
+                <strong>💡 Tip:</strong> Don't have credentials? Switch to <strong>"None"</strong> or <strong>"Basic Auth"</strong> to test without real credentials!
+              </small>
             </>
           )}
 
           {authentication === 'Bearer Token' && (
             <div className="input-group">
-              <label>Bearer Token</label>
+              <label>Bearer Token <span style={{ color: '#f44336' }}>*</span></label>
               <input
                 type="password"
                 value={bearerToken}
                 onChange={(e) => setBearerToken(e.target.value)}
-                placeholder="Enter your bearer token"
+                placeholder="Enter your real bearer token (required)"
                 className="url-input"
                 disabled={!backendOnline}
               />
+              <small style={{ color: '#666', fontSize: '0.85rem', marginTop: '5px', display: 'block' }}>
+                💡 <strong>Required:</strong> You must enter a valid bearer token. Placeholder values are not accepted.<br/>
+                <strong>How it works:</strong> Bearer token will be added to headers as <code>Authorization: Bearer YOUR_TOKEN</code>.<br/>
+                <strong>Test URLs:</strong><br/>
+                • GitHub API: <code>https://api.github.com/user</code> (requires GitHub personal access token)<br/>
+                • Twitter API: <code>https://api.twitter.com/2/users/me</code> (requires Twitter Bearer token)<br/>
+                <strong>💡 Tip:</strong> Don't have a token? Switch to <strong>"None"</strong> or <strong>"Basic Auth"</strong> to test without real credentials!
+              </small>
             </div>
           )}
 
@@ -1029,7 +1310,7 @@ function APISection({ data, setData }) {
                   type="text"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder="Enter username"
+                  placeholder="e.g., admin, user, api_user"
                   className="url-input"
                   disabled={!backendOnline}
                 />
@@ -1040,11 +1321,18 @@ function APISection({ data, setData }) {
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter password"
+                  placeholder="Enter your password"
                   className="url-input"
                   disabled={!backendOnline}
                 />
               </div>
+              <small style={{ color: '#666', fontSize: '0.85rem', marginTop: '5px', display: 'block' }}>
+                💡 <strong>Example:</strong> Basic Auth encodes username:password in Base64 and adds to <code>Authorization: Basic BASE64_STRING</code> header.<br/>
+                <strong>Test URLs:</strong><br/>
+                • HTTPBin (public test): <code>https://httpbin.org/basic-auth/user/passwd</code> (use username: "user", password: "passwd")<br/>
+                • Custom APIs: Any API that uses HTTP Basic Authentication<br/>
+                <strong>Note:</strong> HTTPBin is a public testing service - perfect for testing Basic Auth without real credentials!
+              </small>
             </>
           )}
 
