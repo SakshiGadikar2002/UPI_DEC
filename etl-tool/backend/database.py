@@ -13,7 +13,7 @@ import json
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
 POSTGRES_PORT = int(os.getenv("POSTGRES_PORT", "5432"))
 POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
-POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "12345")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "1972")
 POSTGRES_DB = os.getenv("POSTGRES_DB", "etl_tool")
 
 # Global connection pool
