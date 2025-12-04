@@ -91,12 +91,25 @@ class DatabaseExtractor(BaseExtractor):
         return pd.read_sql_query(query, conn)
 
 
+class XLSXExtractor(BaseExtractor):
+    """Extract data from XLSX files"""
+    
+    def extract(self, config: Dict[str, Any]) -> pd.DataFrame:
+        file_path = config.get("file_path")
+        if not file_path:
+            raise ValueError("file_path is required for XLSX extraction")
+        
+        # Read XLSX file
+        return pd.read_excel(file_path, engine='openpyxl')
+
+
 class Extractor:
     """Factory class for creating extractors"""
     
     _extractors = {
         "csv": CSVExtractor(),
         "json": JSONExtractor(),
+        "xlsx": XLSXExtractor(),
         "api": APIExtractor(),
         "database": DatabaseExtractor(),
     }

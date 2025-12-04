@@ -55,12 +55,24 @@ class DatabaseLoader(BaseLoader):
         conn.close()
 
 
+class XLSXLoader(BaseLoader):
+    """Load data to XLSX files"""
+    
+    def load(self, df: pd.DataFrame, config: Dict[str, Any]) -> None:
+        file_path = config.get("file_path")
+        if not file_path:
+            raise ValueError("file_path is required for XLSX loading")
+        
+        df.to_excel(file_path, index=False, engine='openpyxl')
+
+
 class Loader:
     """Factory class for creating loaders"""
     
     _loaders = {
         "csv": CSVLoader(),
         "json": JSONLoader(),
+        "xlsx": XLSXLoader(),
         "database": DatabaseLoader(),
     }
     

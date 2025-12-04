@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -14,6 +14,8 @@ import asyncio
 import logging
 import os
 from pathlib import Path
+import pandas as pd
+import shutil
 
 from etl.extractor import Extractor
 from etl.transformer import Transformer
@@ -57,6 +59,14 @@ app.add_middleware(
 # Backend is in etl-tool/backend/, frontend dist is in etl-tool/frontend/dist/
 BASE_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIST = BASE_DIR / "frontend" / "dist"
+
+# Create uploads directory
+UPLOADS_DIR = BASE_DIR / "backend" / "uploads"
+UPLOADS_DIR.mkdir(exist_ok=True)
+
+# Create processed directory
+PROCESSED_DIR = BASE_DIR / "backend" / "processed"
+PROCESSED_DIR.mkdir(exist_ok=True)
 
 # Mount static files (CSS, JS, images, etc.)
 if FRONTEND_DIST.exists():
@@ -1435,6 +1445,214 @@ async def websocket_endpoint(websocket: WebSocket):
     finally:
         connection_manager.disconnect(websocket)
         logger.info("WebSocket connection closed")
+
+
+# File Upload and Processing Endpoints
+@app.post("/api/files/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """Upload a file (CSV, JSON, or XLSX)"""
+    try:
+        # Validate file type
+        file_ext = file.filename.split('.')[-1].lower()
+        if file_ext not in ['csv', 'json', 'xlsx', 'xls']:
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {file_ext}. Supported types: CSV, JSON, XLSX")
+        
+        # Generate unique file ID
+        file_id = str(uuid.uuid4())
+        file_path = UPLOADS_DIR / f"{file_id}_{file.filename}"
+        
+        # Save uploaded file
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        # Determine source type
+        source_type = 'xlsx' if file_ext in ['xlsx', 'xls'] else file_ext
+        
+        return {
+            "file_id": file_id,
+            "filename": file.filename,
+            "file_path": str(file_path),
+            "source_type": source_type,
+            "transformations": []  # Default empty transformations
+        }
+    except Exception as e:
+        logger.error(f"Error uploading file: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class ProcessFileRequest(BaseModel):
+    file_id: str
+    transformations: Optional[List[Dict[str, Any]]] = []
+
+
+@app.post("/api/files/preview")
+async def preview_file(request: Dict[str, str]):
+    """Get preview of an uploaded file"""
+    try:
+        file_id = request.get("file_id")
+        if not file_id:
+            raise HTTPException(status_code=400, detail="file_id is required")
+        
+        # Find the uploaded file
+        uploaded_files = list(UPLOADS_DIR.glob(f"{file_id}_*"))
+        if not uploaded_files:
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        file_path = uploaded_files[0]
+        file_ext = file_path.suffix.lower().replace('.', '')
+        if not file_ext:
+            # Try to get extension from filename
+            file_ext = str(file_path).split('.')[-1].lower()
+        source_type = 'xlsx' if file_ext in ['xlsx', 'xls'] else file_ext
+        
+        # Extract data
+        df = Extractor.extract(source_type, {"file_path": str(file_path)})
+        
+        # Get preview (first 10 rows)
+        preview = {
+            "columns": df.columns.tolist(),
+            "rows": df.head(10).to_dict(orient='records'),
+            "totalRows": len(df),
+            "totalColumns": len(df.columns)
+        }
+        
+        return {"preview": preview}
+    except Exception as e:
+        logger.error(f"Error previewing file: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/files/process")
+async def process_file(request: ProcessFileRequest):
+    """Process an uploaded file through the ETL pipeline"""
+    try:
+        # Find the uploaded file
+        uploaded_files = list(UPLOADS_DIR.glob(f"{request.file_id}_*"))
+        if not uploaded_files:
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        file_path = uploaded_files[0]
+        file_ext = file_path.suffix.lower().replace('.', '')
+        if not file_ext:
+            # Try to get extension from filename
+            file_ext = str(file_path).split('.')[-1].lower()
+        source_type = 'xlsx' if file_ext in ['xlsx', 'xls'] else file_ext
+        
+        # Extract data
+        df = Extractor.extract(source_type, {"file_path": str(file_path)})
+        initial_rows = len(df)
+        initial_columns = len(df.columns)
+        
+        # Get input preview (first 10 rows)
+        input_preview = {
+            "columns": df.columns.tolist(),
+            "rows": df.head(10).to_dict(orient='records'),
+            "totalRows": initial_rows,
+            "totalColumns": initial_columns
+        }
+        
+        # Transform data - Always remove duplicates and clean data (same as CSV/JSON)
+        transformed_df = df.copy()
+        
+        # Remove duplicates (same as frontend does for CSV/JSON)
+        rows_before_dedup = len(transformed_df)
+        transformed_df = transformed_df.drop_duplicates()
+        duplicate_count = rows_before_dedup - len(transformed_df)
+        
+        # Clean data: trim whitespace from string columns
+        for col in transformed_df.columns:
+            if transformed_df[col].dtype == 'object':
+                transformed_df[col] = transformed_df[col].astype(str).str.strip()
+        
+        # Remove rows where all values are empty
+        transformed_df = transformed_df.dropna(how='all')
+        transformed_df = transformed_df[transformed_df.astype(str).ne('').any(axis=1)]
+        
+        rows_after_transform = len(transformed_df)
+        
+        # Apply additional transformations if provided
+        if request.transformations:
+            transformed_df = Transformer.transform(transformed_df, request.transformations)
+            rows_after_transform = len(transformed_df)
+        
+        # Generate output file
+        output_file_id = str(uuid.uuid4())
+        output_filename = f"{output_file_id}_processed.xlsx"
+        output_path = PROCESSED_DIR / output_filename
+        
+        # Load to XLSX
+        Loader.load(transformed_df, "xlsx", {"file_path": str(output_path)})
+        
+        # Get output preview (first 10 rows)
+        output_preview = {
+            "columns": transformed_df.columns.tolist(),
+            "rows": transformed_df.head(10).to_dict(orient='records'),
+            "totalRows": len(transformed_df),
+            "totalColumns": len(transformed_df.columns)
+        }
+        
+        # Prepare pipeline steps (same structure as CSV/JSON)
+        pipeline_steps = [
+            {
+                "name": "EXTRACT",
+                "status": "success",
+                "size": f"{initial_rows} elements"
+            },
+            {
+                "name": "LOAD",
+                "status": "success",
+                "rowsProcessed": rows_after_transform
+            },
+            {
+                "name": "TRANSFORM_1",
+                "status": "success",
+                "size": f"{rows_after_transform} elements",
+                "transformer": "FunctionTransformer"
+            }
+        ]
+        
+        # Convert output data to records for frontend
+        output_data = transformed_df.to_dict(orient='records')
+        
+        return {
+            "status": "success",
+            "input_preview": input_preview,
+            "output_preview": output_preview,
+            "output_file": f"/api/files/download/{output_file_id}",
+            "output_file_name": output_filename,
+            "pipeline_steps": pipeline_steps,
+            "output_data": output_data,
+            "duplicate_count": duplicate_count,
+            "rows_before": initial_rows,
+            "rows_after": rows_after_transform
+        }
+    except Exception as e:
+        logger.error(f"Error processing file: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/files/download/{file_id}")
+async def download_file(file_id: str):
+    """Download a processed file"""
+    try:
+        # Find the processed file
+        processed_files = list(PROCESSED_DIR.glob(f"{file_id}_*"))
+        if not processed_files:
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        file_path = processed_files[0]
+        return FileResponse(
+            path=str(file_path),
+            filename=file_path.name,
+            media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+    except Exception as e:
+        logger.error(f"Error downloading file: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Catch-all route for frontend client-side routing
