@@ -1,7 +1,7 @@
 """
 Pydantic models for API connector management
 """
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, validator, root_validator
 from typing import Optional, Dict, Any
 from datetime import datetime
 from enum import Enum
@@ -58,18 +58,43 @@ class ConnectorCreate(BaseModel):
             raise ValueError("URL must start with http://, https://, ws://, or wss://")
         return v
     
-    @validator('auth_type')
-    def validate_auth_credentials(cls, v, values):
+    @root_validator(skip_on_failure=True)
+    def validate_auth_credentials(cls, values):
         """Validate that required credentials are provided based on auth type"""
-        if v == AuthType.API_KEY and not values.get('api_key'):
-            raise ValueError("API key is required for API Key authentication")
-        if v == AuthType.HMAC and (not values.get('api_key') or not values.get('api_secret')):
-            raise ValueError("API key and secret are required for HMAC authentication")
-        if v == AuthType.BEARER_TOKEN and not values.get('bearer_token'):
-            raise ValueError("Bearer token is required for Bearer Token authentication")
-        if v == AuthType.BASIC_AUTH and (not values.get('username') or not values.get('password')):
-            raise ValueError("Username and password are required for Basic Auth")
-        return v
+        auth_type = values.get('auth_type')
+        
+        # If auth_type is None or NONE, no validation needed
+        if not auth_type or auth_type == AuthType.NONE:
+            return values
+        
+        # Validate credentials based on auth type
+        if auth_type == AuthType.API_KEY:
+            api_key = values.get('api_key')
+            if not api_key or (isinstance(api_key, str) and api_key.strip() == ''):
+                raise ValueError("API key is required for API Key authentication")
+        
+        elif auth_type == AuthType.HMAC:
+            api_key = values.get('api_key')
+            api_secret = values.get('api_secret')
+            if not api_key or (isinstance(api_key, str) and api_key.strip() == ''):
+                raise ValueError("API key is required for HMAC authentication")
+            if not api_secret or (isinstance(api_secret, str) and api_secret.strip() == ''):
+                raise ValueError("API secret is required for HMAC authentication")
+        
+        elif auth_type == AuthType.BEARER_TOKEN:
+            bearer_token = values.get('bearer_token')
+            if not bearer_token or (isinstance(bearer_token, str) and bearer_token.strip() == ''):
+                raise ValueError("Bearer token is required for Bearer Token authentication")
+        
+        elif auth_type == AuthType.BASIC_AUTH:
+            username = values.get('username')
+            password = values.get('password')
+            if not username or (isinstance(username, str) and username.strip() == ''):
+                raise ValueError("Username is required for Basic Auth")
+            if not password or (isinstance(password, str) and password.strip() == ''):
+                raise ValueError("Password is required for Basic Auth")
+        
+        return values
 
 
 class ConnectorUpdate(BaseModel):

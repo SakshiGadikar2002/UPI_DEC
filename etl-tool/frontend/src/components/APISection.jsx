@@ -5,13 +5,14 @@ import { removeDuplicates } from '../utils/duplicateRemover'
 import { getRealtimeWebSocket } from '../utils/realtimeWebSocket'
 
 function APISection({ data, setData }) {
-  const [apiUrl, setApiUrl] = useState('https://api.binance.com/api/v3/depth?symbol=BTCUSDT')
+  // Start with an empty URL; user or Quick Connect will provide it.
+  // This avoids hardcoding any specific provider (like Binance) in the UI state.
+  const [apiUrl, setApiUrl] = useState('')
   const [httpMethod, setHttpMethod] = useState('GET')
   const [headers, setHeaders] = useState('{"Authorization": "Bearer token"}\n\nAuthorization: Bearer token')
   const [queryParams, setQueryParams] = useState('{"limit": 100, "page": 1}\n\nlimit=100&page=1')
   const [authentication, setAuthentication] = useState('None')
   const [apiKey, setApiKey] = useState('')
-  const [apiKeyHeader, setApiKeyHeader] = useState('X-API-Key')
   const [apiSecret, setApiSecret] = useState('')
   const [bearerToken, setBearerToken] = useState('')
   const [username, setUsername] = useState('')
@@ -39,84 +40,82 @@ function APISection({ data, setData }) {
   const streamHealthCheckRef = useRef(null) // Reference for stream health check interval
   const [authExamplesExpanded, setAuthExamplesExpanded] = useState(false)
 
-  // Authentication test examples - defined early to ensure availability
-  const authTestExamples = {
-    'None': {
-      url: 'https://httpbin.org/get',
-      method: 'GET',
-      headers: '',
-      queryParams: '',
-      authentication: 'None',
-      description: 'HTTPBin - Public API (no auth required)'
-    },
-    'API Key': {
-      url: 'https://api.example.com/data',
-      method: 'GET',
-      headers: '{"X-API-Key": "your-api-key-here"}',
-      queryParams: '',
-      authentication: 'API Key',
-      apiKey: 'your-api-key-here',
-      apiKeyHeader: 'X-API-Key',
-      description: 'Example API with API Key authentication'
-    },
-    'HMAC': {
-      url: 'https://api.binance.com/api/v3/account',
-      method: 'GET',
-      headers: '',
-      queryParams: '',
-      authentication: 'HMAC',
-      apiKey: 'your-binance-api-key',
-      apiSecret: 'your-binance-api-secret',
-      description: 'Binance API - Requires valid API key and secret'
-    },
-    'Bearer Token': {
-      url: 'https://api.github.com/user',
-      method: 'GET',
-      headers: '',
-      queryParams: '',
-      authentication: 'Bearer Token',
-      bearerToken: 'ghp_your_github_token_here',
-      description: 'GitHub API - Requires personal access token'
-    },
-    'Basic Auth': {
-      url: 'https://httpbin.org/basic-auth/user/passwd',
-      method: 'GET',
-      headers: '',
-      queryParams: '',
-      authentication: 'Basic Auth',
-      username: 'user',
-      password: 'passwd',
-      description: 'HTTPBin Basic Auth Test - Public test endpoint'
-    }
-  }
+  // Authentication test examples - COMMENTED OUT (not needed)
+  // const authTestExamples = {
+  //   'None': {
+  //     url: 'https://httpbin.org/get',
+  //     method: 'GET',
+  //     headers: '',
+  //     queryParams: '',
+  //     authentication: 'None',
+  //     description: 'HTTPBin - Public API (no auth required)'
+  //   },
+  //   'API Key': {
+  //     url: 'https://httpbin.org/headers',
+  //     method: 'GET',
+  //     headers: '',
+  //     queryParams: '',
+  //     authentication: 'API Key',
+  //     apiKey: 'test-api-key-12345',
+  //     description: 'HTTPBin Headers Test - Shows all request headers (verify API key is sent)'
+  //   },
+  //   'HMAC': {
+  //     url: 'https://api.binance.com/api/v3/account',
+  //     method: 'GET',
+  //     headers: '',
+  //     queryParams: '',
+  //     authentication: 'HMAC',
+  //     apiKey: 'your-binance-api-key',
+  //     apiSecret: 'your-binance-api-secret',
+  //     description: 'Binance API - Requires valid API key and secret'
+  //   },
+  //   'Bearer Token': {
+  //     url: 'https://httpbin.org/headers',
+  //     method: 'GET',
+  //     headers: '',
+  //     queryParams: '',
+  //     authentication: 'Bearer Token',
+  //     bearerToken: 'test-bearer-token-12345',
+  //     description: 'HTTPBin Headers Test - Shows all request headers (verify Bearer token is sent)'
+  //   },
+  //   'Basic Auth': {
+  //     url: 'https://httpbin.org/basic-auth/user/passwd',
+  //     method: 'GET',
+  //     headers: '',
+  //     queryParams: '',
+  //     authentication: 'Basic Auth',
+  //     username: 'user',
+  //     password: 'passwd',
+  //     description: 'HTTPBin Basic Auth Test - Public test endpoint (may be temporarily unavailable)'
+  //   }
+  // }
 
-  const loadAuthExample = (authType) => {
-    const example = authTestExamples[authType]
-    if (example) {
-      // Clear all credentials first
-      setApiKey('')
-      setApiSecret('')
-      setBearerToken('')
-      setUsername('')
-      setPassword('')
-      setApiKeyHeader('X-API-Key')
-      
-      // Then set the example values
-      setApiUrl(example.url)
-      setHttpMethod(example.method)
-      setHeaders(example.headers || '')
-      setQueryParams(example.queryParams || '')
-      setAuthentication(example.authentication)
-      
-      // Set credentials only if they exist in the example
-      if (example.apiKey) setApiKey(example.apiKey)
-      if (example.apiKeyHeader) setApiKeyHeader(example.apiKeyHeader)
-      if (example.apiSecret) setApiSecret(example.apiSecret)
-      if (example.bearerToken) setBearerToken(example.bearerToken)
-      if (example.username) setUsername(example.username)
-      if (example.password) setPassword(example.password)
-    }
-  }
+  // COMMENTED OUT - Test examples function (not needed)
+  // const loadAuthExample = (authType) => {
+  //   const example = authTestExamples[authType]
+  //   if (example) {
+  //     // Clear all credentials first
+  //     setApiKey('')
+  //     setApiSecret('')
+  //     setBearerToken('')
+  //     setUsername('')
+  //     setPassword('')
+  //     
+  //     // Then set the example values
+  //     setApiUrl(example.url)
+  //     setHttpMethod(example.method)
+  //     setHeaders(example.headers || '')
+  //     setQueryParams(example.queryParams || '')
+  //     setAuthentication(example.authentication)
+  //     
+  //     // Set credentials only if they exist in the example
+  //     if (example.apiKey) setApiKey(example.apiKey)
+  //     if (example.apiSecret) setApiSecret(example.apiSecret)
+  //     if (example.bearerToken) setBearerToken(example.bearerToken)
+  //     if (example.username) setUsername(example.username)
+  //     if (example.password) setPassword(example.password)
+  //   }
+  // }
 
   // Quick Connect configurations
   const quickConnectOptions = [
@@ -585,11 +584,6 @@ function APISection({ data, setData }) {
           setLoading(false)
           return
         }
-        if (!apiKeyHeader || apiKeyHeader.trim() === '') {
-          setError('API Key header name is required. Example: X-API-Key or X-CMC_PRO_API_KEY.')
-          setLoading(false)
-          return
-        }
       }
       if (authentication === 'HMAC') {
         if (!apiKey || apiKey.trim() === '' || isPlaceholder(apiKey) || 
@@ -634,19 +628,12 @@ function APISection({ data, setData }) {
       // Double-check here as a safety measure
       if (authentication === 'API Key') {
         const trimmedKey = apiKey.trim()
-        const trimmedHeader = apiKeyHeader.trim()
         if (!trimmedKey || trimmedKey === '') {
           setError('API Key cannot be empty. Please enter a valid API key.')
           setLoading(false)
           return
         }
-        if (!trimmedHeader || trimmedHeader === '') {
-          setError('API Key header cannot be empty. Please provide a header name.')
-          setLoading(false)
-          return
-        }
         connectorData.api_key = trimmedKey
-        connectorData.api_key_header = trimmedHeader
       } else if (authentication === 'HMAC') {
         const trimmedKey = apiKey.trim()
         const trimmedSecret = apiSecret.trim()
@@ -678,7 +665,7 @@ function APISection({ data, setData }) {
       }
       
       // Log the connector data for debugging (without sensitive info)
-      console.log('Creating connector with:', {
+      console.log('🔍 Creating connector with:', {
         ...connectorData,
         api_key: connectorData.api_key ? '***' : undefined,
         api_secret: connectorData.api_secret ? '***' : undefined,
@@ -686,15 +673,35 @@ function APISection({ data, setData }) {
         username: connectorData.username ? '***' : undefined,
         password: connectorData.password ? '***' : undefined
       })
+      console.log('🔍 Auth type:', authentication)
+      console.log('🔍 Has username:', !!connectorData.username, 'Has password:', !!connectorData.password)
 
-      // Create connector
-      const createResponse = await fetch('/api/connectors', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(connectorData)
-      })
+      // Create connector with timeout
+      console.log('📤 Sending connector creation request...')
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 30000) // 30 second timeout
+      
+      let createResponse
+      try {
+        createResponse = await fetch('/api/connectors', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(connectorData),
+          signal: controller.signal
+        })
+        clearTimeout(timeoutId)
+        console.log('📥 Received response:', createResponse.status, createResponse.statusText)
+      } catch (error) {
+        clearTimeout(timeoutId)
+        if (error.name === 'AbortError') {
+          setError('Request timeout: Backend took too long to respond. Please check backend logs.')
+          setLoading(false)
+          return
+        }
+        throw error
+      }
 
       if (!createResponse.ok) {
         let errorMessage = 'Failed to create connector'
@@ -1149,6 +1156,7 @@ function APISection({ data, setData }) {
           <div className="input-group">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
               <label>Authentication</label>
+              {/* COMMENTED OUT - Test Examples button (not needed)
               <button
                 type="button"
                 onClick={() => setAuthExamplesExpanded(!authExamplesExpanded)}
@@ -1165,6 +1173,7 @@ function APISection({ data, setData }) {
               >
                 {authExamplesExpanded ? '▼ Hide' : '▶ Show'} Test Examples
               </button>
+              */}
             </div>
             <select
               value={authentication}
@@ -1178,6 +1187,7 @@ function APISection({ data, setData }) {
               <option value="Bearer Token">Bearer Token - OAuth 2.0 Bearer token</option>
               <option value="Basic Auth">Basic Auth - HTTP Basic Authentication</option>
             </select>
+            {/* COMMENTED OUT - Test Examples UI section (not needed)
             {authExamplesExpanded && (
               <div style={{ 
                 marginTop: '10px', 
@@ -1228,9 +1238,10 @@ function APISection({ data, setData }) {
                       </div>
                     </button>
                   ))}
-                </div>
+                </div> 
               </div>
             )}
+            */}
             {authentication === 'None' && (
               <small style={{ color: '#666', fontSize: '0.85rem', marginTop: '5px', display: 'block' }}>
                 {/* 💡 <strong>No Authentication:</strong> Use this for public APIs that don't require authentication.<br/>
@@ -1253,21 +1264,11 @@ function APISection({ data, setData }) {
                 className="url-input"
                 disabled={!backendOnline}
               />
-            <div style={{ marginTop: '10px' }}>
-              <label>API Key Header Name <span style={{ color: '#f44336' }}>*</span></label>
-              <input
-                type="text"
-                value={apiKeyHeader}
-                onChange={(e) => setApiKeyHeader(e.target.value)}
-                placeholder="e.g., X-API-Key or X-CMC_PRO_API_KEY"
-                className="url-input"
-                disabled={!backendOnline}
-              />
-            </div>
               <small style={{ color: '#666', fontSize: '0.85rem', marginTop: '5px', display: 'block' }}>
                 💡 <strong>Required:</strong> You must enter a valid API key. Placeholder values like "your-api-key-here" are not accepted.<br/>
-              <strong>How it works:</strong> API Key will be added to headers using the name you provide (default <code>X-API-Key</code>).<br/>
-                <strong>💡 Tip:</strong> Don't have an API key? Switch to <strong>"None"</strong> or <strong>"Basic Auth"</strong> to test without real credentials!
+                <strong>How it works:</strong> API Key will be added to headers as <code>X-API-Key</code> header.<br/>
+                <strong>Test URL:</strong> <code>https://httpbin.org/headers</code> - This endpoint shows all request headers, so you can verify your API key is being sent correctly.<br/>
+                <strong>💡 Tip:</strong> Use any API key value (e.g., "test-key-123") with httpbin.org/headers to test - it will show your API key in the response!
               </small>
             </div>
           )}
@@ -1321,10 +1322,9 @@ function APISection({ data, setData }) {
               <small style={{ color: '#666', fontSize: '0.85rem', marginTop: '5px', display: 'block' }}>
                 💡 <strong>Required:</strong> You must enter a valid bearer token. Placeholder values are not accepted.<br/>
                 <strong>How it works:</strong> Bearer token will be added to headers as <code>Authorization: Bearer YOUR_TOKEN</code>.<br/>
-                <strong>Test URLs:</strong><br/>
-                • GitHub API: <code>https://api.github.com/user</code> (requires GitHub personal access token)<br/>
-                • Twitter API: <code>https://api.twitter.com/2/users/me</code> (requires Twitter Bearer token)<br/>
-                <strong>💡 Tip:</strong> Don't have a token? Switch to <strong>"None"</strong> or <strong>"Basic Auth"</strong> to test without real credentials!
+                <strong>Test URL:</strong> <code>https://httpbin.org/headers</code> - This endpoint shows all request headers, so you can verify your Bearer token is being sent correctly.<br/>
+                <strong>💡 Tip:</strong> Use any token value (e.g., "test-token-123") with httpbin.org/headers to test - it will show your Bearer token in the response!<br/>
+                <strong>Real APIs:</strong> GitHub, Twitter, and other OAuth 2.0 APIs use Bearer tokens (requires real tokens from those services).
               </small>
             </div>
           )}

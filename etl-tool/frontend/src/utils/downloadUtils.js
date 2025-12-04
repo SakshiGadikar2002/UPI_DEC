@@ -64,3 +64,50 @@ export const downloadJSON = (data, filename = 'data.json') => {
   document.body.removeChild(link)
 }
 
+/**
+ * Download data as XLSX file
+ */
+export const downloadXLSX = (data, filename = 'data.xlsx') => {
+  if (!Array.isArray(data) || data.length === 0) {
+    console.error('Data must be a non-empty array')
+    return
+  }
+
+  // Import XLSX dynamically to avoid issues
+  import('xlsx').then(XLSX => {
+    // Get all unique keys from all objects
+    const allKeys = new Set()
+    data.forEach(item => {
+      if (typeof item === 'object' && item !== null) {
+        Object.keys(item).forEach(key => allKeys.add(key))
+      }
+    })
+
+    const headers = Array.from(allKeys)
+    
+    // Create worksheet data
+    const worksheetData = [headers]
+    
+    data.forEach(item => {
+      const row = headers.map(header => {
+        const value = item[header]
+        if (value === null || value === undefined) {
+          return ''
+        }
+        return value
+      })
+      worksheetData.push(row)
+    })
+
+    // Create workbook and worksheet
+    const worksheet = XLSX.utils.aoa_to_sheet(worksheetData)
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Sheet1')
+
+    // Generate XLSX file
+    XLSX.writeFile(workbook, filename)
+  }).catch(error => {
+    console.error('Error downloading XLSX:', error)
+  })
+}
+

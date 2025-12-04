@@ -36,10 +36,13 @@ class ConnectorManager:
         polling_interval: int = 1000
     ) -> BaseConnector:
         """Create a new connector instance"""
+        logger.info(f"🔧 ConnectorManager: Creating connector instance {connector_id} with auth_type: {auth_type}")
         async with self._lock:
             if connector_id in self.connectors:
+                logger.warning(f"⚠️ Connector {connector_id} already exists")
                 raise ValueError(f"Connector {connector_id} already exists")
             
+            logger.info(f"🔧 ConnectorManager: Calling ConnectorFactory.create_connector...")
             connector = ConnectorFactory.create_connector(
                 connector_id=connector_id,
                 api_url=api_url,
@@ -52,7 +55,7 @@ class ConnectorManager:
             )
             
             self.connectors[connector_id] = connector
-            logger.info(f"✅ Created connector: {connector_id}")
+            logger.info(f"✅ ConnectorManager: Created connector instance {connector_id} successfully")
             return connector
     
     async def start_connector(self, connector_id: str) -> bool:

@@ -28,21 +28,51 @@ class ConnectorFactory:
     
     @staticmethod
     def detect_exchange(url: str) -> Optional[str]:
-        """Detect exchange name from URL"""
-        url_lower = url.lower()
+        """
+        Detect exchange / provider name from URL.
+
+        Rules:
+        - For well-known exchanges, return a friendly canonical name (binance, okx, coinbase, etc.)
+        - For any other API, derive a name from the hostname instead of returning a generic "custom"
+          e.g.:
+            - https://api.coingecko.com/...    -> "coingecko"
+            - https://min-api.cryptocompare.com/... -> "cryptocompare"
+        """
+        if not url:
+            return "unknown"
+
         parsed = urlparse(url)
-        hostname = parsed.hostname or ""
-        
-        if "binance" in hostname or "binance" in url_lower:
+        hostname = (parsed.hostname or "").lower()
+
+        if not hostname:
+            return "unknown"
+
+        # Known exchanges / providers
+        if "binance" in hostname:
             return "binance"
-        elif "okx" in hostname or "okex" in hostname or "okx" in url_lower:
+        if "okx" in hostname or "okex" in hostname:
             return "okx"
-        elif "coinbase" in hostname or "coinbase" in url_lower:
+        if "coinbase" in hostname:
             return "coinbase"
-        elif "kraken" in hostname or "kraken" in url_lower:
+        if "kraken" in hostname:
             return "kraken"
+        if "kucoin" in hostname:
+            return "kucoin"
+
+        # Fallback: derive a readable name from the hostname
+        # Strip common prefixes (api, www, min, data) and the TLD
+        parts = hostname.split(".")
+        if len(parts) >= 2:
+            core_parts = [p for p in parts[:-1] if p not in ("api", "www", "min", "data")]
+            if core_parts:
+                core = core_parts[-1]
+            else:
+                # If everything was stripped, fall back to second‑level domain
+                core = parts[-2]
         else:
-            return "custom"
+            core = parts[0]
+
+        return core or "unknown"
     
     @staticmethod
     def create_connector(
