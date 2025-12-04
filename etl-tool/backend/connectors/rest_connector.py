@@ -75,11 +75,24 @@ class RESTConnector(BaseConnector):
         """Prepare headers with authentication"""
         headers = self.headers.copy()
         
+        # Debug logging
+        logger.debug(f"[{self.connector_id}] Auth type: {self.auth_type}, Has handler: {self.auth_handler is not None}, Has credentials: {self.credentials is not None}")
+        if self.credentials:
+            # Log credential keys but not values for security
+            logger.debug(f"[{self.connector_id}] Credential keys: {list(self.credentials.keys())}")
+        
         if self.auth_handler and self.credentials:
             try:
                 headers = self.auth_handler.add_auth_headers(headers, self.credentials)
+                logger.info(f"[{self.connector_id}] ✅ Auth headers added successfully. Headers: {list(headers.keys())}")
             except Exception as e:
-                logger.error(f"Error adding auth headers: {e}")
+                logger.error(f"[{self.connector_id}] ❌ Error adding auth headers: {e}")
+                import traceback
+                traceback.print_exc()
+        elif not self.auth_handler:
+            logger.warning(f"[{self.connector_id}] ⚠️ No auth handler created for auth_type: '{self.auth_type}'")
+        elif not self.credentials:
+            logger.warning(f"[{self.connector_id}] ⚠️ No credentials available for auth_type: '{self.auth_type}'")
         
         return headers
     
@@ -229,20 +242,40 @@ class RESTConnector(BaseConnector):
         return response_data
     
     def _detect_exchange(self) -> str:
-        """Detect exchange name from URL"""
-        url_lower = self.api_url.lower()
-        if "binance" in url_lower:
+        """Detect exchange / provider name from URL (REST)"""
+        from urllib.parse import urlparse
+
+        url = self.api_url or ""
+        parsed = urlparse(url)
+        hostname = (parsed.hostname or "").lower()
+
+        if not hostname:
+            return "unknown"
+
+        # Known exchanges / providers
+        if "binance" in hostname:
             return "binance"
-        elif "okx" in url_lower or "okex" in url_lower:
+        if "okx" in hostname or "okex" in hostname:
             return "okx"
-        elif "coinbase" in url_lower:
+        if "coinbase" in hostname:
             return "coinbase"
-        elif "kraken" in url_lower:
+        if "kraken" in hostname:
             return "kraken"
-        elif "kucoin" in url_lower:
+        if "kucoin" in hostname:
             return "kucoin"
+
+        # Fallback: derive a readable name from the hostname
+        parts = hostname.split(".")
+        if len(parts) >= 2:
+            core_parts = [p for p in parts[:-1] if p not in ("api", "www", "min", "data")]
+            if core_parts:
+                core = core_parts[-1]
+            else:
+                core = parts[-2]
         else:
-            return "custom"
+            core = parts[0]
+
+        return core or "unknown"
     
     async def _run_loop(self):
         """Main polling loop"""
