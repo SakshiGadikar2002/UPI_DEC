@@ -1,6 +1,6 @@
 import { useState, useMemo, memo } from 'react'
 import './DataDisplay.css'
-import { downloadCSV, downloadJSON, downloadXLSX } from '../utils/downloadUtils'
+import { downloadCSV, downloadJSON } from '../utils/downloadUtils'
 
 function DataDisplay({ sectionData }) {
   // ALL HOOKS MUST BE CALLED BEFORE ANY CONDITIONAL RETURNS
@@ -253,17 +253,10 @@ function DataDisplay({ sectionData }) {
     const filename = fileName ? fileName.replace(/\.[^/.]+$/, '') + '_extracted.json' : 'data.json'
     downloadJSON(isArray ? tableData : [tableData], filename)
   }
-
-  const handleDownloadXLSX = () => {
-    const filename = fileName ? fileName.replace(/\.[^/.]+$/, '') + '_extracted.xlsx' : 'data.xlsx'
-    downloadXLSX(isArray ? tableData : [tableData], filename)
-  }
   
   const handleDownload = () => {
     if (downloadFormat === 'csv' || downloadFormat === 'CSV') {
       handleDownloadCSV()
-    } else if (downloadFormat === 'xlsx' || downloadFormat === 'XLSX') {
-      handleDownloadXLSX()
     } else if (downloadFormat === 'xml' || downloadFormat === 'XML') {
       // For XML, download as text
       const xmlContent = typeof tableData[0]?.raw === 'string' ? tableData[0].raw : JSON.stringify(tableData, null, 2)
@@ -391,17 +384,6 @@ function DataDisplay({ sectionData }) {
                   <line x1="12" y1="15" x2="12" y2="3"></line>
                 </svg>
                 <span className="download-label">CSV</span>
-              </button>
-            ) : downloadFormat === 'xlsx' || downloadFormat === 'XLSX' ? (
-              <button onClick={handleDownloadXLSX} className="download-btn" title="Download XLSX">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
-                  <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
-                  <path d="M8 7h8"></path>
-                  <path d="M8 11h8"></path>
-                  <path d="M8 15h6"></path>
-                </svg>
-                <span className="download-label">XLSX</span>
               </button>
             ) : downloadFormat === 'xml' || downloadFormat === 'XML' ? (
               <button onClick={handleDownload} className="download-btn" title="Download XML">

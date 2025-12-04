@@ -4,8 +4,7 @@ import './FileUploadSection.css'
 import { checkBackendHealth } from '../utils/backendCheck'
 import { parseFlexibleJSON } from '../utils/jsonParser'
 import { removeDuplicates } from '../utils/duplicateRemover'
-import { downloadCSV, downloadJSON, downloadXLSX } from '../utils/downloadUtils'
-import * as XLSX from 'xlsx'
+import { downloadCSV, downloadJSON } from '../utils/downloadUtils'
 
 function FileUploadSection({ data, setData }) {
   const [selectedFile, setSelectedFile] = useState(null)
@@ -47,41 +46,11 @@ function FileUploadSection({ data, setData }) {
       
       // Read file for preview
       const fileType = file.name.split('.').pop().toLowerCase()
-      if (fileType === 'csv' || fileType === 'json' || fileType === 'xlsx') {
+      if (fileType === 'csv' || fileType === 'json') {
         const reader = new FileReader()
         reader.onload = (e) => {
           try {
-            if (fileType === 'xlsx') {
-              try {
-                const data = new Uint8Array(e.target.result)
-                const workbook = XLSX.read(data, { type: 'array' })
-                const firstSheetName = workbook.SheetNames[0]
-                const worksheet = workbook.Sheets[firstSheetName]
-                const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' })
-                
-                if (jsonData.length > 0) {
-                  const headers = jsonData[0].map(h => String(h || ''))
-                  const previewRows = []
-                  for (let i = 1; i < Math.min(11, jsonData.length); i++) {
-                    const row = jsonData[i]
-                    const obj = {}
-                    headers.forEach((header, index) => {
-                      obj[header] = row[index] !== undefined ? String(row[index]) : ''
-                    })
-                    previewRows.push(obj)
-                  }
-                  
-                  setInputPreview({
-                    columns: headers,
-                    rows: previewRows,
-                    totalRows: jsonData.length - 1,
-                    fileType: 'XLSX'
-                  })
-                }
-              } catch (xlsxError) {
-                console.error('Error reading XLSX file for preview:', xlsxError)
-              }
-            } else if (fileType === 'csv') {
+            if (fileType === 'csv') {
               const text = e.target.result
               const lines = text.split('\n').filter(line => line.trim())
               if (lines.length > 0) {
@@ -146,11 +115,7 @@ function FileUploadSection({ data, setData }) {
             console.error('Error reading file for preview:', err)
           }
         }
-        if (fileType === 'xlsx') {
-          reader.readAsArrayBuffer(file)
-        } else {
-          reader.readAsText(file)
-        }
+        reader.readAsText(file)
       }
     }
   }
@@ -184,7 +149,7 @@ function FileUploadSection({ data, setData }) {
     try {
       const fileType = selectedFile.name.split('.').pop().toLowerCase()
       
-      if (fileType === 'csv' || fileType === 'json' || fileType === 'xlsx') {
+      if (fileType === 'csv' || fileType === 'json') {
         // Read file and extract data
         const reader = new FileReader()
         
@@ -196,47 +161,7 @@ function FileUploadSection({ data, setData }) {
             let duplicateCount = 0
             
             // Extract phase
-            if (fileType === 'xlsx') {
-              try {
-                const data = new Uint8Array(e.target.result)
-                const workbook = XLSX.read(data, { type: 'array' })
-                const firstSheetName = workbook.SheetNames[0]
-                const worksheet = workbook.Sheets[firstSheetName]
-                const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' })
-                
-                if (jsonData.length === 0) {
-                  throw new Error('XLSX file is empty')
-                }
-                
-                const headers = jsonData[0].map(h => String(h || ''))
-                if (!headers || headers.length === 0) {
-                  throw new Error('XLSX file has no headers')
-                }
-                
-                totalRows = jsonData.length - 1
-                
-                const rows = []
-                for (let i = 1; i < jsonData.length; i++) {
-                  try {
-                    const row = jsonData[i]
-                    const obj = {}
-                    headers.forEach((header, index) => {
-                      obj[header] = row[index] !== undefined ? String(row[index]) : ''
-                    })
-                    rows.push(obj)
-                  } catch (lineError) {
-                    parseErrors.push({
-                      line: i + 1,
-                      error: lineError.message || 'Parse error',
-                      content: JSON.stringify(jsonData[i]).substring(0, 100)
-                    })
-                  }
-                }
-                extractedData = rows
-              } catch (xlsxError) {
-                throw new Error(`XLSX parsing error: ${xlsxError.message}`)
-              }
-            } else if (fileType === 'csv') {
+            if (fileType === 'csv') {
               try {
                 const text = e.target.result
                 if (!text || text.trim().length === 0) {
@@ -480,13 +405,9 @@ function FileUploadSection({ data, setData }) {
           })
         }
 
-        if (fileType === 'xlsx') {
-          reader.readAsArrayBuffer(selectedFile)
-        } else {
-          reader.readAsText(selectedFile)
-        }
+        reader.readAsText(selectedFile)
       } else {
-        setError('Unsupported file type. Please upload CSV, JSON, or XLSX files.')
+        setError('Unsupported file type. Please upload CSV or JSON files.')
         setLoading(false)
       }
     } catch (err) {
@@ -515,8 +436,6 @@ function FileUploadSection({ data, setData }) {
     
     if (fileType === 'csv') {
       downloadCSV(downloadData, filename)
-    } else if (fileType === 'xlsx') {
-      downloadXLSX(downloadData, filename)
     } else {
       downloadJSON(downloadData, filename)
     }
@@ -526,7 +445,7 @@ function FileUploadSection({ data, setData }) {
     <div className="section-container">
       <div className="section-header">
         <h2>📁 File Upload Section</h2>
-        <p>Upload CSV, JSON, XLSX or stored files for extraction</p>
+        <p>Upload CSV, JSON or stored files for extraction</p>
       </div>
 
       <div className="section-content">
@@ -535,12 +454,12 @@ function FileUploadSection({ data, setData }) {
             <input
               type="file"
               id="file-upload"
-              accept=".csv,.json,.xlsx"
+              accept=".csv,.json"
               onChange={handleFileChange}
               className="file-input"
             />
             <label htmlFor="file-upload" className="file-label">
-              {selectedFile ? selectedFile.name : 'Choose File (CSV/JSON/XLSX)'}
+              {selectedFile ? selectedFile.name : 'Choose File (CSV/JSON)'}
             </label>
             
             <button 
