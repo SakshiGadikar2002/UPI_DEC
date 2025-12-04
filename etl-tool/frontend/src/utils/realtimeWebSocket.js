@@ -2,7 +2,13 @@
  * WebSocket client for real-time data updates
  */
 class RealtimeWebSocket {
-  constructor(url = 'ws://localhost:8000/api/realtime') {
+  constructor(url = null) {
+    // Use current host/port if no URL provided (works when served from same port)
+    if (!url) {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+      const host = window.location.host
+      url = `${protocol}//${host}/api/realtime`
+    }
     this.url = url
     this.ws = null
     this.reconnectAttempts = 0

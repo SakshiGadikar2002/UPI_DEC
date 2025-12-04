@@ -7,6 +7,7 @@ import json
 from typing import Optional, Dict, Any
 from datetime import datetime
 import logging
+from urllib.parse import urlparse
 
 from connectors.base_connector import BaseConnector
 from services.auth_handler import AuthHandlerFactory
@@ -155,18 +156,36 @@ class WebSocketConnector(BaseConnector):
             }
     
     def _detect_exchange(self) -> str:
-        """Detect exchange name from URL"""
-        url_lower = self.api_url.lower()
-        if "binance" in url_lower:
+        """Detect exchange / provider name from URL (WebSocket)"""
+        url = self.api_url or ""
+        parsed = urlparse(url)
+        hostname = (parsed.hostname or "").lower()
+
+        if not hostname:
+            return "unknown"
+
+        # Known exchanges / providers
+        if "binance" in hostname:
             return "binance"
-        elif "okx" in url_lower or "okex" in url_lower:
+        if "okx" in hostname or "okex" in hostname:
             return "okx"
-        elif "coinbase" in url_lower:
+        if "coinbase" in hostname:
             return "coinbase"
-        elif "kraken" in url_lower:
+        if "kraken" in hostname:
             return "kraken"
+
+        # Fallback: derive a readable name from the hostname
+        parts = hostname.split(".")
+        if len(parts) >= 2:
+            core_parts = [p for p in parts[:-1] if p not in ("api", "www", "min", "data")]
+            if core_parts:
+                core = core_parts[-1]
+            else:
+                core = parts[-2]
         else:
-            return "custom"
+            core = parts[0]
+
+        return core or "unknown"
     
     def _detect_message_type(self, data: Dict[str, Any]) -> str:
         """Detect message type from data structure"""

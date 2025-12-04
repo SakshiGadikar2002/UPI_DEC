@@ -1,5 +1,7 @@
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any, Set
 import uvicorn
@@ -10,6 +12,8 @@ from contextlib import asynccontextmanager
 import uuid
 import asyncio
 import logging
+import os
+from pathlib import Path
 
 from etl.extractor import Extractor
 from etl.transformer import Transformer
@@ -40,14 +44,26 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="ETL Tool API", version="1.0.0", lifespan=lifespan)
 
-# CORS middleware
+# CORS middleware - allow all origins since we're serving from same port
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173", "http://localhost:5174"],
+    allow_origins=["*"],  # Allow all origins since frontend is served from same port
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Get the path to frontend dist directory
+# Backend is in etl-tool/backend/, frontend dist is in etl-tool/frontend/dist/
+BASE_DIR = Path(__file__).resolve().parent.parent
+FRONTEND_DIST = BASE_DIR / "frontend" / "dist"
+
+# Mount static files (CSS, JS, images, etc.)
+if FRONTEND_DIST.exists():
+    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="assets")
+    logger.info(f"Static files mounted from: {FRONTEND_DIST}")
+else:
+    logger.warning(f"Frontend dist directory not found at: {FRONTEND_DIST}")
 
 # Initialize job manager
 job_manager = JobManager()
@@ -230,6 +246,11 @@ class JobStatusResponse(BaseModel):
 
 @app.get("/")
 async def root():
+    """Serve frontend index.html or return API info"""
+    # If frontend dist exists, serve it; otherwise return API info
+    index_path = FRONTEND_DIST / "index.html"
+    if index_path.exists():
+        return FileResponse(str(index_path))
     return {"message": "ETL Tool API", "version": "1.0.0"}
 
 
@@ -922,32 +943,60 @@ async def get_websocket_data_count(
 async def create_connector(connector_data: ConnectorCreate):
     """Create a new API connector"""
     try:
+        logger.info(f"📝 Creating connector: {connector_data.name} for URL: {connector_data.api_url}")
+        logger.info(f"📝 Auth type: {connector_data.auth_type}")
+        
         pool = get_pool()
         connector_id = f"conn_{uuid.uuid4().hex[:12]}"
+        logger.info(f"📝 Generated connector_id: {connector_id}")
         
         # Detect protocol and exchange
         from connectors.connector_factory import ConnectorFactory
         protocol_type = ConnectorFactory.detect_protocol(connector_data.api_url)
         exchange_name = ConnectorFactory.detect_exchange(connector_data.api_url)
+        logger.info(f"📝 Detected protocol: {protocol_type}, exchange: {exchange_name}")
         
         # Prepare credentials
         credentials = {}
         if connector_data.auth_type == AuthType.API_KEY:
             credentials["api_key"] = connector_data.api_key
+            logger.info(f"📝 Added API key to credentials (length: {len(connector_data.api_key) if connector_data.api_key else 0})")
         elif connector_data.auth_type == AuthType.HMAC:
             credentials["api_key"] = connector_data.api_key
             credentials["api_secret"] = connector_data.api_secret
+            logger.info(f"📝 Added HMAC credentials")
         elif connector_data.auth_type == AuthType.BEARER_TOKEN:
             credentials["bearer_token"] = connector_data.bearer_token
+            logger.info(f"📝 Added Bearer token to credentials (length: {len(connector_data.bearer_token) if connector_data.bearer_token else 0})")
         elif connector_data.auth_type == AuthType.BASIC_AUTH:
             credentials["username"] = connector_data.username
             credentials["password"] = connector_data.password
+            logger.info(f"📝 Added Basic Auth credentials (username: {connector_data.username})")
         
+        logger.info(f"📝 Encrypting sensitive data...")
         # Encrypt sensitive data
-        headers_encrypted = encryption_service.encrypt_dict(connector_data.headers or {}) if connector_data.headers else None
-        query_params_encrypted = encryption_service.encrypt_dict(connector_data.query_params or {}) if connector_data.query_params else None
-        credentials_encrypted = encryption_service.encrypt_credentials(credentials) if credentials else None
+        try:
+            headers_encrypted = encryption_service.encrypt_dict(connector_data.headers or {}) if connector_data.headers else None
+            logger.info(f"📝 Headers encrypted: {headers_encrypted is not None}")
+        except Exception as e:
+            logger.error(f"❌ Error encrypting headers: {e}")
+            raise
         
+        try:
+            query_params_encrypted = encryption_service.encrypt_dict(connector_data.query_params or {}) if connector_data.query_params else None
+            logger.info(f"📝 Query params encrypted: {query_params_encrypted is not None}")
+        except Exception as e:
+            logger.error(f"❌ Error encrypting query params: {e}")
+            raise
+        
+        try:
+            credentials_encrypted = encryption_service.encrypt_credentials(credentials) if credentials else None
+            logger.info(f"📝 Credentials encrypted: {credentials_encrypted is not None}")
+        except Exception as e:
+            logger.error(f"❌ Error encrypting credentials: {e}")
+            raise
+        
+        logger.info(f"📝 Saving to database...")
         # Save to database
         async with pool.acquire() as conn:
             inserted_id = await conn.fetchval("""
@@ -964,8 +1013,17 @@ async def create_connector(connector_data: ConnectorCreate):
                 ConnectorStatus.INACTIVE.value, connector_data.polling_interval,
                 protocol_type, exchange_name
             )
+            logger.info(f"📝 Saved to database with id: {inserted_id}")
             
-            # Create connector instance
+            # Get created connector
+            row = await conn.fetchrow(
+                "SELECT * FROM api_connectors WHERE id = $1", inserted_id
+            )
+            logger.info(f"📝 Retrieved connector from database")
+        
+        # Create connector instance (outside database transaction to avoid blocking)
+        logger.info(f"📝 Creating connector instance in memory...")
+        try:
             connector = await connector_manager.create_connector(
                 connector_id=connector_id,
                 api_url=connector_data.api_url,
@@ -976,12 +1034,15 @@ async def create_connector(connector_data: ConnectorCreate):
                 auth_type=connector_data.auth_type.value,
                 polling_interval=connector_data.polling_interval
             )
-            
-            # Get created connector
-            row = await conn.fetchrow(
-                "SELECT * FROM api_connectors WHERE id = $1", inserted_id
-            )
+            logger.info(f"✅ Connector instance created successfully")
+        except Exception as e:
+            logger.error(f"❌ Error creating connector instance: {e}")
+            # Don't fail the whole request if connector instance creation fails
+            # The connector is already saved in DB, instance can be created later
+            import traceback
+            traceback.print_exc()
         
+        logger.info(f"✅ Connector created successfully: {connector_id}")
         return ConnectorResponse(
             id=row["id"],
             connector_id=row["connector_id"],
@@ -998,7 +1059,9 @@ async def create_connector(connector_data: ConnectorCreate):
         )
     
     except Exception as e:
-        logger.error(f"Error creating connector: {e}")
+        logger.error(f"❌ Error creating connector: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=400, detail=str(e))
 
 
@@ -1372,6 +1435,28 @@ async def websocket_endpoint(websocket: WebSocket):
     finally:
         connection_manager.disconnect(websocket)
         logger.info("WebSocket connection closed")
+
+
+# Catch-all route for frontend client-side routing
+# This MUST be at the end, after all API routes, so it doesn't intercept API calls
+@app.get("/{full_path:path}")
+async def serve_frontend(full_path: str):
+    """Serve frontend for client-side routing (catch-all route)"""
+    # Don't serve frontend for API routes (shouldn't reach here due to route order, but safety check)
+    if full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="API endpoint not found")
+    
+    # Check if it's a static file request (like favicon, etc.)
+    file_path = FRONTEND_DIST / full_path
+    if file_path.exists() and file_path.is_file():
+        return FileResponse(str(file_path))
+    
+    # For all other routes, serve index.html (for client-side routing)
+    index_path = FRONTEND_DIST / "index.html"
+    if index_path.exists():
+        return FileResponse(str(index_path))
+    
+    raise HTTPException(status_code=404, detail="Not found")
 
 
 if __name__ == "__main__":

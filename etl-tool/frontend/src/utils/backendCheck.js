@@ -1,4 +1,5 @@
-const BACKEND_URL = 'http://localhost:8000'
+// Use relative URL - works when frontend is served from same port as backend
+const BACKEND_URL = ''
 
 export const checkBackendHealth = async () => {
   try {
