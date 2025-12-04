@@ -14,6 +14,7 @@ function FileUploadSection({ data, setData }) {
   const [backendOnline, setBackendOnline] = useState(false)
   const [checkingBackend, setCheckingBackend] = useState(true)
   const [processingResults, setProcessingResults] = useState(null)
+  const [uploadedFileId, setUploadedFileId] = useState(null)
   const [progress, setProgress] = useState({
     extract: { time: 0, status: 'idle' },
     transform: { time: 0, status: 'idle' },
@@ -43,6 +44,7 @@ function FileUploadSection({ data, setData }) {
       setError(null)
       setProcessingResults(null)
       setInputPreview(null)
+      setUploadedFileId(null)
       
       // Read file for preview
       const fileType = file.name.split('.').pop().toLowerCase()
@@ -116,6 +118,54 @@ function FileUploadSection({ data, setData }) {
           }
         }
         reader.readAsText(file)
+      } else if (fileType === 'xlsx' || fileType === 'xls') {
+        // For XLSX files, upload to backend first to get preview
+        setLoading(true)
+        const uploadAndPreview = async () => {
+          try {
+            const formData = new FormData()
+            formData.append('file', file)
+            
+            const uploadResponse = await fetch('http://localhost:8000/api/files/upload', {
+              method: 'POST',
+              body: formData
+            })
+            
+            if (!uploadResponse.ok) {
+              throw new Error('Failed to upload file')
+            }
+            
+            const uploadResult = await uploadResponse.json()
+            setUploadedFileId(uploadResult.file_id)
+            
+            // Get preview from backend
+            const previewResponse = await fetch('http://localhost:8000/api/files/preview', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ file_id: uploadResult.file_id })
+            })
+            
+            if (previewResponse.ok) {
+              const previewResult = await previewResponse.json()
+              const preview = previewResult.preview
+              setInputPreview({
+                columns: preview.columns,
+                rows: preview.rows,
+                totalRows: preview.totalRows,
+                totalColumns: preview.totalColumns,
+                fileType: 'XLSX'
+              })
+            } else {
+              setError('Failed to get file preview')
+            }
+          } catch (err) {
+            console.error('Error uploading XLSX file:', err)
+            setError(`Error uploading XLSX file: ${err.message}`)
+          } finally {
+            setLoading(false)
+          }
+        }
+        uploadAndPreview()
       }
     }
   }
@@ -149,7 +199,146 @@ function FileUploadSection({ data, setData }) {
     try {
       const fileType = selectedFile.name.split('.').pop().toLowerCase()
       
-      if (fileType === 'csv' || fileType === 'json') {
+      // Handle XLSX files through backend (same flow as CSV/JSON)
+      if (fileType === 'xlsx' || fileType === 'xls') {
+        let fileId = uploadedFileId
+        
+        // Upload file if not already uploaded
+        if (!fileId) {
+          const formData = new FormData()
+          formData.append('file', selectedFile)
+          
+          const uploadResponse = await fetch('http://localhost:8000/api/files/upload', {
+            method: 'POST',
+            body: formData
+          })
+          
+          if (!uploadResponse.ok) {
+            const errorData = await uploadResponse.json().catch(() => ({ detail: 'Unknown error' }))
+            throw new Error(errorData.detail || `HTTP error! status: ${uploadResponse.status}`)
+          }
+          
+          const uploadResult = await uploadResponse.json()
+          fileId = uploadResult.file_id
+          setUploadedFileId(fileId)
+        }
+        
+        // Process the file through ETL pipeline
+        setProgress(prev => ({
+          ...prev,
+          extract: { time: 0, status: 'running' }
+        }))
+        
+        const extractStartTime = Date.now()
+        const processResponse = await fetch('http://localhost:8000/api/files/process', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            file_id: fileId,
+            transformations: []
+          })
+        })
+        
+        if (!processResponse.ok) {
+          const errorData = await processResponse.json().catch(() => ({ detail: 'Unknown error' }))
+          throw new Error(errorData.detail || `HTTP error! status: ${processResponse.status}`)
+        }
+        
+        const processResult = await processResponse.json()
+        
+        const extractTime = ((Date.now() - extractStartTime) / 1000).toFixed(2)
+        setProgress(prev => ({
+          ...prev,
+          extract: { time: extractTime, status: 'completed' },
+          transform: { time: 0, status: 'running' }
+        }))
+        
+        // Simulate transform phase (duplicates already removed by backend)
+        await new Promise(resolve => setTimeout(resolve, 500))
+        const transformStartTime = Date.now()
+        const transformTime = ((Date.now() - transformStartTime) / 1000).toFixed(2)
+        
+        setProgress(prev => ({
+          ...prev,
+          transform: { time: transformTime, status: 'completed' },
+          load: { time: 0, status: 'running' }
+        }))
+        
+        // Simulate load phase
+        await new Promise(resolve => setTimeout(resolve, 300))
+        const loadStartTime = Date.now()
+        const loadTime = ((Date.now() - loadStartTime) / 1000).toFixed(2)
+        const totalTime = ((Date.now() - extractStartTime) / 1000).toFixed(2)
+        
+        setProgress(prev => ({
+          ...prev,
+          load: { time: loadTime, status: 'completed' }
+        }))
+        
+        // Update input preview with actual data
+        if (processResult.input_preview) {
+          setInputPreview({
+            columns: processResult.input_preview.columns,
+            rows: processResult.input_preview.rows,
+            totalRows: processResult.input_preview.totalRows,
+            totalColumns: processResult.input_preview.totalColumns,
+            fileType: 'XLSX'
+          })
+        }
+        
+        // Prepare processing results (same structure as CSV/JSON)
+        const results = {
+          success: true,
+          rows_processed: processResult.rows_after || processResult.output_preview?.totalRows || 0,
+          rows_before: processResult.rows_before || processResult.input_preview?.totalRows || 0,
+          duplicateCount: processResult.duplicate_count || 0,
+          output_file: processResult.output_file_name || `${selectedFile.name.replace(/\.[^/.]+$/, '')}_processed.xlsx`,
+          output_file_url: processResult.output_file,
+          results: {
+            steps: {
+              EXTRACT: {
+                status: 'success',
+                data_size: `${processResult.rows_before || processResult.input_preview?.totalRows || 0} elements`
+              },
+              LOAD: {
+                status: 'success'
+              },
+              TRANSFORM_1: {
+                status: 'success',
+                data_size: `${processResult.rows_after || processResult.output_preview?.totalRows || 0} elements`,
+                transformer: 'FunctionTransformer'
+              }
+            }
+          },
+          preview: processResult.output_preview?.rows || [],
+          columns: processResult.output_preview?.columns || []
+        }
+        
+        setProcessingResults(results)
+        
+        // Update parent component data (same as CSV/JSON)
+        setData({
+          source: 'File Upload',
+          fileType: 'XLSX',
+          fileName: selectedFile.name,
+          data: processResult.output_data || [],
+          totalRows: processResult.rows_after || processResult.output_preview?.totalRows || 0,
+          duplicateCount: processResult.duplicate_count || 0,
+          timestamp: new Date().toISOString(),
+          progress: {
+            extract: extractTime,
+            transform: transformTime,
+            load: loadTime,
+            total: totalTime
+          }
+        })
+        
+        setLoading(false)
+        setError(null)
+        
+      } else if (fileType === 'csv' || fileType === 'json') {
         // Read file and extract data
         const reader = new FileReader()
         
@@ -407,7 +596,7 @@ function FileUploadSection({ data, setData }) {
 
         reader.readAsText(selectedFile)
       } else {
-        setError('Unsupported file type. Please upload CSV or JSON files.')
+        setError('Unsupported file type. Please upload CSV, JSON, or XLSX files.')
         setLoading(false)
       }
     } catch (err) {
@@ -419,6 +608,19 @@ function FileUploadSection({ data, setData }) {
   const handleDownload = () => {
     if (!processingResults) return
     
+    const fileType = selectedFile.name.split('.').pop().toLowerCase()
+    
+    // For XLSX files, download from backend
+    if (fileType === 'xlsx' || fileType === 'xls') {
+      if (processingResults.output_file_url) {
+        window.open(`http://localhost:8000${processingResults.output_file_url}`, '_blank')
+      } else {
+        setError('Download URL not available')
+      }
+      return
+    }
+    
+    // For CSV/JSON, download locally
     // Prioritize full processed data from state, fallback to preview
     const downloadData = (data && data.data && Array.isArray(data.data) && data.data.length > 0) 
       ? data.data 
@@ -431,7 +633,6 @@ function FileUploadSection({ data, setData }) {
       return
     }
     
-    const fileType = selectedFile.name.split('.').pop().toLowerCase()
     const filename = processingResults.output_file || `${selectedFile.name.replace(/\.[^/.]+$/, '')}_processed.${fileType}`
     
     if (fileType === 'csv') {
@@ -443,10 +644,10 @@ function FileUploadSection({ data, setData }) {
 
   return (
     <div className="section-container">
-      <div className="section-header">
-        <h2>📁 File Upload Section</h2>
-        <p>Upload CSV, JSON or stored files for extraction</p>
-      </div>
+        <div className="section-header">
+          <h2>📁 File Upload Section</h2>
+          <p>Upload CSV, JSON, or XLSX files for extraction</p>
+        </div>
 
       <div className="section-content">
         <div className="upload-area">
@@ -454,12 +655,12 @@ function FileUploadSection({ data, setData }) {
             <input
               type="file"
               id="file-upload"
-              accept=".csv,.json"
+              accept=".csv,.json,.xlsx,.xls"
               onChange={handleFileChange}
               className="file-input"
             />
             <label htmlFor="file-upload" className="file-label">
-              {selectedFile ? selectedFile.name : 'Choose File (CSV/JSON)'}
+              {selectedFile ? selectedFile.name : 'Choose File (CSV/JSON/XLSX)'}
             </label>
             
             <button 
@@ -563,4 +764,7 @@ function FileUploadSection({ data, setData }) {
 }
 
 export default FileUploadSection
+
+
+
 

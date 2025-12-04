@@ -10,4 +10,5 @@ psycopg2-binary==2.9.9
 cryptography==41.0.7
 websockets==15.0.1
 aiohttp==3.9.1
+openpyxl==3.1.2
 
