@@ -248,15 +248,23 @@ function WebSocketSection({ data, setData }) {
     // Auto-configure for OKX
     if (exchange === 'okx') {
       finalWsUrl = OKX_CONFIG.WS_URL
-      const subscribeMsg = OKX_CONFIG.createSubscribeMessage(okxChannel, okxInstId)
+      let subscribeMsg;
+      if (okxInstId === 'ALL') {
+        // Cap the list to avoid oversized subscription that OKX rejects
+        const capped = [
+          'BTC-USDT', 'ETH-USDT', 'BNB-USDT', 'SOL-USDT', 'XRP-USDT',
+          'ADA-USDT', 'DOGE-USDT', 'MATIC-USDT', 'DOT-USDT', 'AVAX-USDT'
+        ];
+        subscribeMsg = { op: 'subscribe', args: capped.map(inst => ({ channel: okxChannel, instId: inst })) };
+        console.log(`Subscribing to ${capped.length} OKX instruments (capped)`);
+      } else {
+        subscribeMsg = OKX_CONFIG.createSubscribeMessage(okxChannel, okxInstId)
+      }
       finalSubMsg = JSON.stringify(subscribeMsg)
       setWsUrl(finalWsUrl)
       setSubscriptionMessage(finalSubMsg)
       console.log('OKX WebSocket URL:', finalWsUrl)
       console.log('OKX Channel:', okxChannel, 'Instrument ID:', okxInstId)
-      if (okxInstId === 'ALL') {
-        console.log('Subscribing to all OKX instruments')
-      }
     }
     // Auto-configure for Binance
     else if (exchange === 'binance') {
@@ -1080,30 +1088,7 @@ function WebSocketSection({ data, setData }) {
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '8px', verticalAlign: 'middle' }}>
                     <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
                   </svg>
-                  Dashboard
-                </button>
-                <button 
-                  className={`view-tab ${activeView === 'list' ? 'active' : ''}`}
-                  onClick={() => setActiveView('list')}
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '8px', verticalAlign: 'middle' }}>
-                    <line x1="8" y1="6" x2="21" y2="6"></line>
-                    <line x1="8" y1="12" x2="21" y2="12"></line>
-                    <line x1="8" y1="18" x2="21" y2="18"></line>
-                    <line x1="3" y1="6" x2="3.01" y2="6"></line>
-                    <line x1="3" y1="12" x2="3.01" y2="12"></line>
-                    <line x1="3" y1="18" x2="3.01" y2="18"></line>
-                  </svg>
-                  List
-                </button>
-                <button 
-                  className={`view-tab ${activeView === 'compare' ? 'active' : ''}`}
-                  onClick={() => setActiveView('compare')}
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '8px', verticalAlign: 'middle' }}>
-                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
-                  </svg>
-                  Compare
+                  Visualize
                 </button>
               </div>
             </div>
@@ -1281,34 +1266,7 @@ function WebSocketSection({ data, setData }) {
                 throughputData={throughputData}
                 defaultTab="dashboard"
                 exchange={exchange}
-              />
-            </div>
-          )}
-
-          {/* List View - Using RealtimeStream for real-time instrument display */}
-          {activeView === 'list' && connected && data && (
-            <div className="list-container">
-              <RealtimeStream 
-                websocketData={data}
-                messages={messages}
-                latencyData={latencyData}
-                throughputData={throughputData}
-                defaultTab="list"
-                exchange={exchange}
-              />
-            </div>
-          )}
-
-          {/* Compare View - Real-time comparison */}
-          {activeView === 'compare' && connected && data && (
-            <div className="compare-container">
-              <RealtimeStream 
-                websocketData={data}
-                messages={messages}
-                latencyData={latencyData}
-                throughputData={throughputData}
-                defaultTab="compare"
-                exchange={exchange}
+                showTopMovers={false}
               />
             </div>
           )}

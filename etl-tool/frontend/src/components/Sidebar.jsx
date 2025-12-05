@@ -54,7 +54,7 @@ function Sidebar({ activeSection, setActiveSection, isOpen, setIsOpen }) {
           <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
         </svg>
       ), 
-      description: 'Dashboard, List & Compare' 
+      description: 'Realtime dashboards' 
     }
   ]
 
@@ -74,7 +74,7 @@ function Sidebar({ activeSection, setActiveSection, isOpen, setIsOpen }) {
                 <span className="sidebar-label">{section.label}</span>
                 <span className="sidebar-description">{section.description}</span>
               </div>
-              {section.id === 'websocket' && (
+              {(section.id === 'websocket' || section.id === 'visualization') && (
                 <span className="realtime-badge">Realtime</span>
               )}
             </button>

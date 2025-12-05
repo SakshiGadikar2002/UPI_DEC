@@ -284,7 +284,7 @@ const convertToOKXFormat = (symbol) => {
   return symbol;
 };
 
-function RealtimeStream({ onDataCollected, websocketData, messages, latencyData, throughputData, defaultTab = 'dashboard', exchange = 'okx' }) {
+ function RealtimeStream({ onDataCollected, websocketData, messages, latencyData, throughputData, defaultTab = 'dashboard', exchange = 'okx', showTopMovers = true }) {
   const [isConnected, setIsConnected] = useState(false);
   const [connectionId, setConnectionId] = useState(null);
   const [streamData, setStreamData] = useState([]);
@@ -3219,14 +3219,14 @@ function RealtimeStream({ onDataCollected, websocketData, messages, latencyData,
       )}
 
       {activeTab === 'dashboard' && (
-        <DashboardView historyData={historyData} globalStats={websocketData?.globalStats} exchange={exchange} />
+         <DashboardView historyData={historyData} globalStats={websocketData?.globalStats} exchange={exchange} showTopMovers={showTopMovers} />
       )}
     </div>
   );
 }
 
-// Dashboard Component
-function DashboardView({ historyData, globalStats }) {
+ // Dashboard Component
+ function DashboardView({ historyData, globalStats, showTopMovers = true }) {
   // Use useMemo to recalculate when historyData or globalStats changes (real-time updates)
   const calculateMarketMetrics = useMemo(() => {
     // Prefer real global stats when available
@@ -3670,11 +3670,11 @@ function DashboardView({ historyData, globalStats }) {
       </div>
 
       {/* Top Movers (24h) */}
-      {(topGainers.length > 0 || topLosers.length > 0) && (
-        <div className="dashboard-section">
+      {showTopMovers && (topGainers.length > 0 || topLosers.length > 0) && (
+        <div className="dashboard-section" style={{ marginTop: '12px' }}>
           <h4 className="section-title">Top Movers (24h)</h4>
-          <div className="market-overview-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
-            <div className="metric-card" style={{ borderRadius: '6px', padding: '12px', minHeight: '150px' }}>
+          <div className="market-overview-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '20px' }}>
+            <div className="metric-card" style={{ borderRadius: '8px', padding: '14px 16px', minHeight: '170px' }}>
               <div className="metric-header">
                 <span className="metric-label">Top Gainers</span>
               </div>
@@ -3695,7 +3695,7 @@ function DashboardView({ historyData, globalStats }) {
               </div>
             </div>
 
-            <div className="metric-card" style={{ borderRadius: '6px', padding: '12px', minHeight: '150px' }}>
+            <div className="metric-card" style={{ borderRadius: '8px', padding: '14px 16px', minHeight: '170px' }}>
               <div className="metric-header">
                 <span className="metric-label">Top Losers</span>
               </div>
