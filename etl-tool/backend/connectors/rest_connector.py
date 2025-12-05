@@ -12,7 +12,8 @@ from connectors.base_connector import BaseConnector
 from services.auth_handler import AuthHandlerFactory
 
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__) 
+#creates a logger named after the current Python file, so your logs show where they came from.
 
 
 class RESTConnector(BaseConnector):

@@ -4,6 +4,7 @@ import Sidebar from './components/Sidebar'
 import FileUploadSection from './components/FileUploadSection'
 import APISection from './components/APISection'
 import WebSocketSection from './components/WebSocketSection'
+import VisualizationSection from './components/VisualizationSection'
 import DataDisplay from './components/DataDisplay'
 import ErrorBoundary from './components/ErrorBoundary'
 import './App.css'
@@ -148,6 +149,10 @@ function App() {
             data={sectionData.websocket}
             setData={(data) => updateSectionData('websocket', data)}
           />
+        )
+      case 'visualization':
+        return (
+          <VisualizationSection />
         )
       default:
         return null

@@ -1,7 +1,7 @@
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any, Set
 import uvicorn
@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 import pandas as pd
 import shutil
+import time
 
 from etl.extractor import Extractor
 from etl.transformer import Transformer
@@ -383,6 +384,94 @@ async def get_binance_symbols():
     except requests.exceptions.RequestException as e:
         raise HTTPException(status_code=500, detail=f"Error fetching Binance symbols: {str(e)}")
     except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
+
+# CoinGecko API Proxy Endpoints (to avoid CORS issues)
+COINGECKO_API_BASE = "https://api.coingecko.com/api/v3"
+# Rate limiting: track last request time
+_last_coingecko_request = {"time": 0}
+MIN_REQUEST_INTERVAL = 1.0  # Minimum 1 second between requests
+
+
+@app.get("/api/crypto/global-stats")
+async def get_global_crypto_stats():
+    """Proxy endpoint to fetch global cryptocurrency market statistics from CoinGecko"""
+    try:
+        # Rate limiting: ensure minimum interval between requests
+        current_time = time.time()
+        time_since_last = current_time - _last_coingecko_request["time"]
+        if time_since_last < MIN_REQUEST_INTERVAL:
+            await asyncio.sleep(MIN_REQUEST_INTERVAL - time_since_last)
+        
+        _last_coingecko_request["time"] = time.time()
+        
+        response = requests.get(
+            f"{COINGECKO_API_BASE}/global",
+            timeout=15,
+            headers={"Accept": "application/json"}
+        )
+        response.raise_for_status()
+        data = response.json()
+        return JSONResponse(content=data)
+    except requests.exceptions.Timeout:
+        raise HTTPException(status_code=504, detail="CoinGecko API timeout")
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error fetching global stats from CoinGecko: {e}")
+        raise HTTPException(status_code=502, detail=f"Error fetching global stats: {str(e)}")
+    except Exception as e:
+        logger.error(f"Unexpected error in global stats: {e}")
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
+
+@app.get("/api/crypto/markets")
+async def get_crypto_markets(
+    ids: str = Query(..., description="Comma-separated list of coin IDs"),
+    vs_currency: str = Query("usd", description="Target currency"),
+    order: str = Query("market_cap_desc", description="Order by"),
+    per_page: int = Query(20, description="Results per page"),
+    page: int = Query(1, description="Page number"),
+    sparkline: bool = Query(False, description="Include sparkline data"),
+    price_change_percentage: Optional[str] = Query(None, description="Price change percentages")
+):
+    """Proxy endpoint to fetch cryptocurrency market data from CoinGecko"""
+    try:
+        # Rate limiting: ensure minimum interval between requests
+        current_time = time.time()
+        time_since_last = current_time - _last_coingecko_request["time"]
+        if time_since_last < MIN_REQUEST_INTERVAL:
+            await asyncio.sleep(MIN_REQUEST_INTERVAL - time_since_last)
+        
+        _last_coingecko_request["time"] = time.time()
+        
+        params = {
+            "vs_currency": vs_currency,
+            "ids": ids,
+            "order": order,
+            "per_page": per_page,
+            "page": page,
+            "sparkline": str(sparkline).lower()
+        }
+        
+        if price_change_percentage:
+            params["price_change_percentage"] = price_change_percentage
+        
+        response = requests.get(
+            f"{COINGECKO_API_BASE}/coins/markets",
+            params=params,
+            timeout=15,
+            headers={"Accept": "application/json"}
+        )
+        response.raise_for_status()
+        data = response.json()
+        return JSONResponse(content=data)
+    except requests.exceptions.Timeout:
+        raise HTTPException(status_code=504, detail="CoinGecko API timeout")
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error fetching markets from CoinGecko: {e}")
+        raise HTTPException(status_code=502, detail=f"Error fetching markets: {str(e)}")
+    except Exception as e:
+        logger.error(f"Unexpected error in markets: {e}")
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 
