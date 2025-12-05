@@ -58,6 +58,9 @@ const getInstrumentsFromConfig = (exchange) => {
         }
       }
     });
+  } else if (exchange === 'global') {
+    // For global exchange, return all tracked crypto symbols
+    return TRACKED_CRYPTO_SYMBOLS;
   }
   // For 'custom', return empty array - will use instruments from subscription data
   
@@ -527,6 +530,15 @@ function RealtimeStream({ onDataCollected, websocketData, messages, latencyData,
   useEffect(() => {
     // Always process if we have websocketData or messages (for real-time updates in dashboard/list)
     if (!websocketData && (!messages || messages.length === 0)) return;
+    
+    // Debug logging for global exchange
+    if (exchange === 'global' && websocketData?.data) {
+      console.log('🌍 Processing global crypto data:', {
+        dataLength: Array.isArray(websocketData.data) ? websocketData.data.length : 'not array',
+        hasGlobalStats: !!websocketData.globalStats,
+        exchange: exchange
+      });
+    }
 
     // Extract instrument symbol helper - convert to BTCUSDT format
     const getInstrumentSymbol = (data) => {
@@ -590,7 +602,31 @@ function RealtimeStream({ onDataCollected, websocketData, messages, latencyData,
             const symbol = getInstrumentSymbol({ ...trade, arg: item.arg });
             const price = getPrice(trade);
             if (symbol && price) {
-              const timestamp = Date.now();
+              const timestamp = trade.timestamp || Date.now();
+              
+              // Extract change percentages from CoinGecko data
+              const change24h = trade.change24h ? parseFloat(trade.change24h) : 0;
+              const change1h = trade.change1h ? parseFloat(trade.change1h) : 0;
+              const change7d = trade.change7d ? parseFloat(trade.change7d) : 0;
+              
+              // Extract chartData from sparkline if available (CoinGecko format)
+              let existingChartData = [];
+              if (trade.chartData && Array.isArray(trade.chartData) && trade.chartData.length > 0) {
+                existingChartData = trade.chartData;
+              } else if (trade.sparkline && Array.isArray(trade.sparkline) && trade.sparkline.length > 0) {
+                // Transform sparkline array to chartData format
+                const now = Date.now();
+                existingChartData = trade.sparkline.map((sparkPrice, index) => {
+                  const ratio = index / Math.max(trade.sparkline.length - 1, 1);
+                  const sparkTimestamp = now - (1 - ratio) * 7 * 24 * 60 * 60 * 1000;
+                  return {
+                    time: new Date(sparkTimestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+                    price: sparkPrice,
+                    timestamp: sparkTimestamp
+                  };
+                });
+              }
+              
               const chartPoint = {
                 time: new Date(timestamp).toLocaleTimeString(),
                 price,
@@ -600,25 +636,40 @@ function RealtimeStream({ onDataCollected, websocketData, messages, latencyData,
               if (!instrumentsMap.has(symbol)) {
                 instrumentsMap.set(symbol, {
                   symbol,
-                  name: CRYPTO_NAMES[symbol.replace('-', '')]?.name || symbol,
+                  name: trade.name || CRYPTO_NAMES[symbol.replace('-', '')]?.name || symbol,
                   price,
-                  change1h: 0,
-                  change6h: 0,
-                  change12h: 0,
+                  change1h: change1h,
+                  change6h: 0, // Not available from CoinGecko
+                  change12h: 0, // Not available from CoinGecko
+                  change24h: change24h,
+                  change7d: change7d,
+                  marketCap: trade.marketCap ? parseFloat(trade.marketCap) : 0,
+                  volume24h: trade.vol24h ? parseFloat(trade.vol24h) : 0,
                   latency: latencyData && latencyData.length > 0 ? latencyData[latencyData.length - 1]?.latency || 0 : 0,
                   lastUpdateTimestamp: timestamp,
-                  chartData: []
+                  chartData: existingChartData.length > 0 ? existingChartData : []
                 });
-                chartPointsBySymbol.set(symbol, [chartPoint]);
+                chartPointsBySymbol.set(symbol, existingChartData.length > 0 ? existingChartData : [chartPoint]);
               } else {
                 const existing = instrumentsMap.get(symbol);
+                // Merge chartData - use existing if it has more points, otherwise use new
+                const mergedChartData = existingChartData.length > (existing.chartData?.length || 0) 
+                  ? existingChartData 
+                  : (existing.chartData || []);
+                
                 instrumentsMap.set(symbol, {
                   ...existing,
                   price,
-                  lastUpdateTimestamp: timestamp
+                  change1h: change1h || existing.change1h,
+                  change24h: change24h || existing.change24h,
+                  change7d: change7d || existing.change7d,
+                  marketCap: trade.marketCap ? parseFloat(trade.marketCap) : existing.marketCap,
+                  volume24h: trade.vol24h ? parseFloat(trade.vol24h) : existing.volume24h,
+                  lastUpdateTimestamp: timestamp,
+                  chartData: mergedChartData
                 });
                 const existingPoints = chartPointsBySymbol.get(symbol) || [];
-                chartPointsBySymbol.set(symbol, [...existingPoints, chartPoint].slice(-50));
+                chartPointsBySymbol.set(symbol, mergedChartData.length > 0 ? mergedChartData : [...existingPoints, chartPoint].slice(-50));
               }
             }
           });
@@ -661,8 +712,16 @@ function RealtimeStream({ onDataCollected, websocketData, messages, latencyData,
       };
 
       if (Array.isArray(websocketData.data)) {
-        websocketData.data.forEach(processDataItem);
+        websocketData.data.forEach((item, idx) => {
+          if (exchange === 'global' && idx === 0) {
+            console.log('🌍 Processing first data item:', item);
+          }
+          processDataItem(item);
+        });
       } else {
+        if (exchange === 'global') {
+          console.log('🌍 Processing single data item:', websocketData.data);
+        }
         processDataItem(websocketData.data);
       }
     }
@@ -717,6 +776,16 @@ function RealtimeStream({ onDataCollected, websocketData, messages, latencyData,
       
       // First, initialize with instruments from config based on selected exchange (even without data)
       const allConfigInstruments = getInstrumentsFromConfig(exchange);
+      
+      // Debug logging for global exchange
+      if (exchange === 'global') {
+        console.log('🌍 Initializing historyData:', {
+          configInstruments: allConfigInstruments.length,
+          newDataItems: newData.length,
+          symbols: newData.map(d => d.symbol)
+        });
+      }
+      
       allConfigInstruments.forEach(symbol => {
         const cryptoInfo = CRYPTO_NAMES[symbol] || { name: symbol.replace('USDT', ''), symbol: symbol.replace('USDT', '') };
         merged.set(symbol, {
@@ -726,6 +795,7 @@ function RealtimeStream({ onDataCollected, websocketData, messages, latencyData,
           change1h: 0,
           change6h: 0,
           change12h: 0,
+          change24h: 0,
           latency: 0,
           lastUpdateTimestamp: null,
           chartData: [],
@@ -733,8 +803,8 @@ function RealtimeStream({ onDataCollected, websocketData, messages, latencyData,
         });
       });
       
-      // For custom exchange, also include instruments from subscription data
-      if (exchange === 'custom') {
+      // For custom or global exchange, also include instruments from subscription data
+      if (exchange === 'custom' || exchange === 'global') {
         newData.forEach(item => {
           if (item.symbol && !merged.has(item.symbol)) {
             const cryptoInfo = CRYPTO_NAMES[item.symbol] || { name: item.symbol.replace('USDT', ''), symbol: item.symbol.replace('USDT', '') };
@@ -757,7 +827,8 @@ function RealtimeStream({ onDataCollected, websocketData, messages, latencyData,
       // Then, merge with existing data (filter by exchange for OKX/Binance)
       prevData.forEach(item => {
         // For OKX/Binance, only include instruments from their config
-        if (exchange !== 'custom') {
+        // For global/custom, include all instruments
+        if (exchange !== 'custom' && exchange !== 'global') {
           const configInstruments = getInstrumentsFromConfig(exchange);
           if (!configInstruments.includes(item.symbol)) {
             return; // Skip instruments not in the selected exchange config
@@ -774,7 +845,8 @@ function RealtimeStream({ onDataCollected, websocketData, messages, latencyData,
       // Finally, update with new real-time data (filter by exchange)
       newData.forEach(item => {
         // For OKX/Binance, only process instruments from their config
-        if (exchange !== 'custom') {
+        // For global/custom, process all instruments
+        if (exchange !== 'custom' && exchange !== 'global') {
           const configInstruments = getInstrumentsFromConfig(exchange);
           if (!configInstruments.includes(item.symbol)) {
             return; // Skip instruments not in the selected exchange config
@@ -787,16 +859,22 @@ function RealtimeStream({ onDataCollected, websocketData, messages, latencyData,
         if (existing) {
           // Update existing with new price and merge chart data
           const existingChartData = existing.chartData || [];
-          // Merge chart points, avoiding duplicates
-          const allPoints = [...existingChartData, ...symbolChartPoints]
-            .filter((point, index, self) => 
-              index === self.findIndex(p => p.timestamp === point.timestamp)
-            )
-            .sort((a, b) => a.timestamp - b.timestamp)
-            .slice(-50);
+          // Use chartData from item if available (CoinGecko sparkline), otherwise merge with symbolChartPoints
+          const itemChartData = item.chartData && item.chartData.length > 0 ? item.chartData : symbolChartPoints;
+          
+          // Merge chart points, avoiding duplicates - prefer itemChartData if it has more points
+          const allPoints = itemChartData.length > existingChartData.length 
+            ? itemChartData 
+            : [...existingChartData, ...symbolChartPoints]
+                .filter((point, index, self) => 
+                  index === self.findIndex(p => p.timestamp === point.timestamp)
+                )
+                .sort((a, b) => a.timestamp - b.timestamp)
+                .slice(-200); // Keep more points for better charts
           
           merged.set(item.symbol, {
             ...existing,
+            ...item, // Include all fields from item (change24h, change1h, marketCap, etc.)
             price: item.price,
             lastUpdateTimestamp: item.lastUpdateTimestamp,
             latency: item.latency,
@@ -805,9 +883,11 @@ function RealtimeStream({ onDataCollected, websocketData, messages, latencyData,
           });
         } else {
           // New instrument - initialize with chart data
-          const initialChartData = symbolChartPoints
-            .sort((a, b) => a.timestamp - b.timestamp)
-            .slice(-200); // Keep more points for better real-time charts
+          const initialChartData = (item.chartData && item.chartData.length > 0) 
+            ? item.chartData 
+            : symbolChartPoints
+                .sort((a, b) => a.timestamp - b.timestamp)
+                .slice(-200); // Keep more points for better real-time charts
           merged.set(item.symbol, {
             ...item,
             chartData: initialChartData,
@@ -817,11 +897,22 @@ function RealtimeStream({ onDataCollected, websocketData, messages, latencyData,
       });
       
       // Sort: instruments with data first, then alphabetically
-      return Array.from(merged.values()).sort((a, b) => {
+      const sortedData = Array.from(merged.values()).sort((a, b) => {
         if (a.hasData && !b.hasData) return -1;
         if (!a.hasData && b.hasData) return 1;
         return a.symbol.localeCompare(b.symbol);
       });
+      
+      // Debug logging for global exchange
+      if (exchange === 'global') {
+        console.log('🌍 Final historyData:', {
+          totalItems: sortedData.length,
+          itemsWithData: sortedData.filter(d => d.hasData).length,
+          symbols: sortedData.map(d => d.symbol)
+        });
+      }
+      
+      return sortedData;
     });
 
     // Update chartData for live view graphs (aggregate all prices)
@@ -849,7 +940,7 @@ function RealtimeStream({ onDataCollected, websocketData, messages, latencyData,
       messagesPerSecond: throughputData && throughputData.length > 0 ? throughputData[throughputData.length - 1]?.throughput || 0 : 0,
       lastUpdate: new Date().toLocaleTimeString()
     }));
-  }, [websocketData, messages, latencyData, throughputData]);
+  }, [websocketData, messages, latencyData, throughputData, exchange]);
 
   // Set up SocketIO connection for real-time price updates (only if no props provided)
   useEffect(() => {
@@ -3128,21 +3219,34 @@ function RealtimeStream({ onDataCollected, websocketData, messages, latencyData,
       )}
 
       {activeTab === 'dashboard' && (
-        <DashboardView historyData={historyData} />
+        <DashboardView historyData={historyData} globalStats={websocketData?.globalStats} exchange={exchange} />
       )}
     </div>
   );
 }
 
 // Dashboard Component
-function DashboardView({ historyData }) {
-  // Use useMemo to recalculate when historyData changes (real-time updates)
+function DashboardView({ historyData, globalStats }) {
+  // Use useMemo to recalculate when historyData or globalStats changes (real-time updates)
   const calculateMarketMetrics = useMemo(() => {
+    // Prefer real global stats when available
+    if (globalStats) {
+      return {
+        totalMarketCap: globalStats.total_market_cap?.usd || 0,
+        totalVolume: globalStats.total_volume_24h?.usd || 0,
+        btcDominance: globalStats.market_cap_percentage?.btc || 0,
+        ethDominance: globalStats.market_cap_percentage?.eth || 0,
+        fearGreedIndex: 50, // Not provided by CoinGecko
+        altcoinSeasonIndex: 50 // Placeholder
+      };
+    }
+
     if (!historyData || historyData.length === 0) {
       return {
         totalMarketCap: 0,
         totalVolume: 0,
         btcDominance: 0,
+        ethDominance: 0,
         fearGreedIndex: 50,
         altcoinSeasonIndex: 50
       };
@@ -3208,10 +3312,11 @@ function DashboardView({ historyData }) {
       totalMarketCap,
       totalVolume,
       btcDominance,
+      ethDominance: 0,
       fearGreedIndex: Math.round(fearGreedIndex),
       altcoinSeasonIndex: Math.round(altcoinSeasonIndex)
     };
-  }, [historyData]);
+  }, [historyData, globalStats]);
 
   const metrics = calculateMarketMetrics;
 
@@ -3284,16 +3389,105 @@ function DashboardView({ historyData }) {
       .slice(-30);
   }, [historyData]);
 
-  // Prepare data for comparison chart - use real-time data
-  const topCoins = useMemo(() => {
+  // Top movers (24h) for gainers/losers cards
+  const topGainers = useMemo(() => {
     return historyData
-      .filter(item => item.price > 0 && item.hasData)
-      .sort((a, b) => b.price - a.price)
+      .filter(item => item.price > 0 && item.hasData && item.change24h !== undefined)
+      .sort((a, b) => (b.change24h || 0) - (a.change24h || 0))
       .slice(0, 5);
   }, [historyData]);
 
+  const topLosers = useMemo(() => {
+    return historyData
+      .filter(item => item.price > 0 && item.hasData && item.change24h !== undefined)
+      .sort((a, b) => (a.change24h || 0) - (b.change24h || 0))
+      .slice(0, 5);
+  }, [historyData]);
+
+  // Top 5 coins for display cards (like CoinMarketCap)
+  const top5Coins = useMemo(() => {
+    return historyData
+      .filter(item => item.price > 0 && item.hasData)
+      .sort((a, b) => {
+        // Sort by market cap if available, otherwise by price
+        const aMarketCap = a.marketCap || (a.price * 1000000000);
+        const bMarketCap = b.marketCap || (b.price * 1000000000);
+        return bMarketCap - aMarketCap;
+      })
+      .slice(0, 5);
+  }, [historyData]);
+
+  // Prepare data for comparison chart - use real-time data
   return (
     <div className="dashboard-container">
+      {/* Top Coins Section - Like CoinMarketCap */}
+      {top5Coins.length > 0 && (
+        <div className="dashboard-section">
+          <h4 className="section-title">Top Coins</h4>
+          <div className="top-coins-grid" style={{ 
+            display: 'grid', 
+            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
+            gap: '16px',
+            marginBottom: '24px'
+          }}>
+            {top5Coins.map((coin, index) => {
+              const coinName = CRYPTO_NAMES[coin.symbol]?.name || coin.symbol.replace('USDT', '');
+              const coinSymbol = CRYPTO_NAMES[coin.symbol]?.symbol || coin.symbol.replace('USDT', '');
+              const change24h = coin.change24h || coin.change1h || 0;
+              const isPositive = change24h >= 0;
+              const sparklineData = coin.chartData?.slice(-24) || []; // Last 24 points for sparkline
+              
+              return (
+                <div key={coin.symbol} className="top-coin-card" style={{
+                  background: '#fff',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '8px',
+                  padding: '16px',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
+                    <span style={{ fontWeight: '600', fontSize: '14px', color: '#374151' }}>
+                      {coinName}
+                    </span>
+                    <span style={{ marginLeft: '8px', fontSize: '12px', color: '#6b7280' }}>
+                      {coinSymbol}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '20px', fontWeight: '700', color: '#111827', marginBottom: '4px' }}>
+                    ${coin.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                  <div style={{ 
+                    fontSize: '14px', 
+                    color: isPositive ? '#10b981' : '#ef4444',
+                    marginBottom: '8px'
+                  }}>
+                    {isPositive ? '▲' : '▼'} {Math.abs(change24h).toFixed(2)}%
+                  </div>
+                  {sparklineData.length > 0 && (
+                    <div style={{ height: '40px', width: '100%' }}>
+                      <ResponsiveContainer width="100%" height={40}>
+                        <LineChart data={sparklineData}>
+                          <Line 
+                            type="monotone" 
+                            dataKey="price" 
+                            stroke={isPositive ? '#10b981' : '#ef4444'} 
+                            strokeWidth={2} 
+                            dot={false}
+                            isAnimationActive={false}
+                          />
+                          <XAxis hide dataKey="time" />
+                          <YAxis hide />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Market Overview Section */}
       <div className="dashboard-section">
         <h4 className="section-title">Market Overview</h4>
@@ -3305,11 +3499,23 @@ function DashboardView({ historyData }) {
               {/* <span className="info-icon">ℹ️</span> */}
             </div>
             <div className="metric-value">
-              ${(metrics.totalMarketCap / 1e12).toFixed(2)}T
+              {metrics.totalMarketCap >= 1e12 
+                ? `$${(metrics.totalMarketCap / 1e12).toFixed(2)}T`
+                : metrics.totalMarketCap >= 1e9
+                ? `$${(metrics.totalMarketCap / 1e9).toFixed(2)}B`
+                : metrics.totalMarketCap > 0
+                ? `$${(metrics.totalMarketCap / 1e6).toFixed(2)}M`
+                : '$0.00T'}
             </div>
-            <div className="metric-change positive">
-              <span>▲</span> 2.5%
-            </div>
+            {globalStats ? (
+              <div className="metric-change positive">
+                <span>●</span> Live Data
+              </div>
+            ) : (
+              <div className="metric-change positive">
+                <span>▲</span> 2.5%
+              </div>
+            )}
             <div className="metric-sparkline">
               {marketCapHistory.length > 0 && (
                 <ResponsiveContainer width="100%" height={30}>
@@ -3330,11 +3536,23 @@ function DashboardView({ historyData }) {
               {/* <span className="info-icon">ℹ️</span> */}
             </div>
             <div className="metric-value">
-              ${(metrics.totalVolume / 1e9).toFixed(2)}B
+              {metrics.totalVolume >= 1e12 
+                ? `$${(metrics.totalVolume / 1e12).toFixed(2)}T`
+                : metrics.totalVolume >= 1e9
+                ? `$${(metrics.totalVolume / 1e9).toFixed(2)}B`
+                : metrics.totalVolume > 0
+                ? `$${(metrics.totalVolume / 1e6).toFixed(2)}M`
+                : '$0.00B'}
             </div>
-            <div className="metric-change positive">
-              <span>▲</span> 5.2%
-            </div>
+            {globalStats ? (
+              <div className="metric-change positive">
+                <span>●</span> Live Data
+              </div>
+            ) : (
+              <div className="metric-change positive">
+                <span>▲</span> 5.2%
+              </div>
+            )}
             <div className="metric-sparkline">
               {marketCapHistory.length > 0 && (
                 <ResponsiveContainer width="100%" height={30}>
@@ -3360,13 +3578,13 @@ function DashboardView({ historyData }) {
             <div className="dominance-chart">
               <div className="dominance-bars">
                 <div className="dominance-bar" style={{ width: `${metrics.btcDominance}%`, backgroundColor: '#f97316' }}></div>
-                <div className="dominance-bar" style={{ width: '15%', backgroundColor: '#4b5563' }}></div>
-                <div className="dominance-bar" style={{ width: `${100 - metrics.btcDominance - 15}%`, backgroundColor: '#9ca3af' }}></div>
+                <div className="dominance-bar" style={{ width: `${metrics.ethDominance || 12.2}%`, backgroundColor: '#3b82f6' }}></div>
+                <div className="dominance-bar" style={{ width: `${100 - metrics.btcDominance - (metrics.ethDominance || 12.2)}%`, backgroundColor: '#9ca3af' }}></div>
               </div>
               <div className="dominance-labels">
                 <span style={{ color: '#f97316' }}>● BTC {metrics.btcDominance.toFixed(1)}%</span>
-                <span style={{ color: '#4b5563' }}>● ETH 15.0%</span>
-                <span style={{ color: '#9ca3af' }}>● Others {(100 - metrics.btcDominance - 15).toFixed(1)}%</span>
+                <span style={{ color: '#3b82f6' }}>● ETH {(metrics.ethDominance || 12.2).toFixed(1)}%</span>
+                <span style={{ color: '#9ca3af' }}>● Others {(100 - metrics.btcDominance - (metrics.ethDominance || 12.2)).toFixed(1)}%</span>
               </div>
             </div>
           </div>
@@ -3449,6 +3667,56 @@ function DashboardView({ historyData }) {
           </div>
         </div>
       </div>
+
+      {/* Top Movers (24h) */}
+      {(topGainers.length > 0 || topLosers.length > 0) && (
+        <div className="dashboard-section">
+          <h4 className="section-title">Top Movers (24h)</h4>
+          <div className="market-overview-grid">
+            <div className="metric-card">
+              <div className="metric-header">
+                <span className="metric-label">Top Gainers</span>
+              </div>
+              <div className="metric-list">
+                {topGainers.map((coin) => {
+                  const name = CRYPTO_NAMES[coin.symbol]?.name || coin.symbol.replace('USDT', '');
+                  const pct = coin.change24h || 0;
+                  return (
+                    <div key={coin.symbol} className="metric-list-item">
+                      <span className="metric-list-name">{name}</span>
+                      <span className="metric-list-value" style={{ color: '#10b981' }}>
+                        {pct.toFixed(2)}%
+                      </span>
+                    </div>
+                  );
+                })}
+                {topGainers.length === 0 && <div className="metric-list-item">No data</div>}
+              </div>
+            </div>
+
+            <div className="metric-card">
+              <div className="metric-header">
+                <span className="metric-label">Top Losers</span>
+              </div>
+              <div className="metric-list">
+                {topLosers.map((coin) => {
+                  const name = CRYPTO_NAMES[coin.symbol]?.name || coin.symbol.replace('USDT', '');
+                  const pct = coin.change24h || 0;
+                  return (
+                    <div key={coin.symbol} className="metric-list-item">
+                      <span className="metric-list-name">{name}</span>
+                      <span className="metric-list-value" style={{ color: '#ef4444' }}>
+                        {pct.toFixed(2)}%
+                      </span>
+                    </div>
+                  );
+                })}
+                {topLosers.length === 0 && <div className="metric-list-item">No data</div>}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Market Distribution & Analytics */}
       <div className="dashboard-section">

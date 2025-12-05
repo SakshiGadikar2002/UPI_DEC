@@ -556,17 +556,17 @@ function WebSocketSection({ data, setData }) {
           messageBufferRef.current.push(newMessage)
         }
         
-        // Update latency data (latency per message)
-        setLatencyData(prev => {
-          const newData = [...prev, {
-            time: now,
-            latency: totalLatency * 1000, // Convert to milliseconds
-            messageNumber: messageCountRef.current,
-            exchange: exchange
-          }]
-          // Keep last 100 messages for latency chart
-          return newData.slice(-100)
-        })
+        // Compute new latency data (latency per message) - compute before state update
+        const newLatencyEntry = {
+          time: now,
+          latency: totalLatency * 1000, // Convert to milliseconds
+          messageNumber: messageCountRef.current,
+          exchange: exchange
+        }
+        const newLatencyData = [...latencyData, newLatencyEntry].slice(-100)
+        
+        // Update latency data state
+        setLatencyData(newLatencyData)
         
         // Update scalability data (cumulative metrics)
         setScalabilityData(prev => {
@@ -585,6 +585,16 @@ function WebSocketSection({ data, setData }) {
           // Keep last 60 data points
           return newData.slice(-60)
         })
+
+        // Compute new throughput data if needed - use current state value
+        let newThroughputData = throughputData
+        if (now - lastSecondRef.current >= 1000) {
+          newThroughputData = [...throughputData, {
+            time: now,
+            throughput: messageCountLastSecondRef.current,
+            exchange: exchange
+          }].slice(-60)
+        }
 
         setMessages(prev => {
           // Add new message at the beginning (newest first)
@@ -748,7 +758,10 @@ function WebSocketSection({ data, setData }) {
               currentMessageRate: currentMessageRate,
               uptime: uptime,
               timingData: timingData,
-              isRealtime: isRealtime || exchange !== 'custom'
+              isRealtime: isRealtime || exchange !== 'custom',
+              latencyData: newLatencyData, // Include for Visualization section (use computed new value)
+              throughputData: newThroughputData, // Include for Visualization section (use computed new value)
+              exchange: exchange // Include exchange type
             }
           })
           
@@ -1017,6 +1030,20 @@ function WebSocketSection({ data, setData }) {
 
     return () => clearInterval(interval)
   }, [connected, setData, connectionTime])
+
+  // Sync latencyData and throughputData to data object for Visualization section
+  useEffect(() => {
+    if (data && connected) {
+      setData(prevData => {
+        if (!prevData) return prevData
+        return {
+          ...prevData,
+          latencyData: latencyData,
+          throughputData: throughputData
+        }
+      })
+    }
+  }, [latencyData, throughputData, connected])
 
   useEffect(() => {
     return () => {
