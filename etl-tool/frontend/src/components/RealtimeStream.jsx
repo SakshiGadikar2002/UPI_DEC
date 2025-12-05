@@ -3426,9 +3426,9 @@ function DashboardView({ historyData, globalStats }) {
           <h4 className="section-title">Top Coins</h4>
           <div className="top-coins-grid" style={{ 
             display: 'grid', 
-            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
-            gap: '16px',
-            marginBottom: '24px'
+            gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', 
+            gap: '12px',
+            marginBottom: '20px'
           }}>
             {top5Coins.map((coin, index) => {
               const coinName = CRYPTO_NAMES[coin.symbol]?.name || coin.symbol.replace('USDT', '');
@@ -3441,31 +3441,32 @@ function DashboardView({ historyData, globalStats }) {
                 <div key={coin.symbol} className="top-coin-card" style={{
                   background: '#fff',
                   border: '1px solid #e5e7eb',
-                  borderRadius: '8px',
-                  padding: '16px',
-                  boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+                  borderRadius: '6px',
+                  padding: '12px',
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
+                  minHeight: '140px'
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
-                    <span style={{ fontWeight: '600', fontSize: '14px', color: '#374151' }}>
+                    <span style={{ fontWeight: '600', fontSize: '13px', color: '#374151' }}>
                       {coinName}
                     </span>
-                    <span style={{ marginLeft: '8px', fontSize: '12px', color: '#6b7280' }}>
+                    <span style={{ marginLeft: '8px', fontSize: '11px', color: '#6b7280' }}>
                       {coinSymbol}
                     </span>
                   </div>
-                  <div style={{ fontSize: '20px', fontWeight: '700', color: '#111827', marginBottom: '4px' }}>
+                  <div style={{ fontSize: '18px', fontWeight: '700', color: '#111827', marginBottom: '4px' }}>
                     ${coin.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                   <div style={{ 
-                    fontSize: '14px', 
+                    fontSize: '12px', 
                     color: isPositive ? '#10b981' : '#ef4444',
-                    marginBottom: '8px'
+                    marginBottom: '6px'
                   }}>
                     {isPositive ? '▲' : '▼'} {Math.abs(change24h).toFixed(2)}%
                   </div>
                   {sparklineData.length > 0 && (
-                    <div style={{ height: '40px', width: '100%' }}>
-                      <ResponsiveContainer width="100%" height={40}>
+                    <div style={{ height: '30px', width: '100%' }}>
+                      <ResponsiveContainer width="100%" height={30}>
                         <LineChart data={sparklineData}>
                           <Line 
                             type="monotone" 
@@ -3672,8 +3673,8 @@ function DashboardView({ historyData, globalStats }) {
       {(topGainers.length > 0 || topLosers.length > 0) && (
         <div className="dashboard-section">
           <h4 className="section-title">Top Movers (24h)</h4>
-          <div className="market-overview-grid">
-            <div className="metric-card">
+          <div className="market-overview-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
+            <div className="metric-card" style={{ borderRadius: '6px', padding: '12px', minHeight: '150px' }}>
               <div className="metric-header">
                 <span className="metric-label">Top Gainers</span>
               </div>
@@ -3694,7 +3695,7 @@ function DashboardView({ historyData, globalStats }) {
               </div>
             </div>
 
-            <div className="metric-card">
+            <div className="metric-card" style={{ borderRadius: '6px', padding: '12px', minHeight: '150px' }}>
               <div className="metric-header">
                 <span className="metric-label">Top Losers</span>
               </div>
