@@ -614,13 +614,29 @@ const convertToOKXFormat = (symbol) => {
               if (trade.chartData && Array.isArray(trade.chartData) && trade.chartData.length > 0) {
                 existingChartData = trade.chartData;
               } else if (trade.sparkline && Array.isArray(trade.sparkline) && trade.sparkline.length > 0) {
-                // Transform sparkline array to chartData format
+                // Transform sparkline array to chartData format with current real-time timestamps
                 const now = Date.now();
+                const today = new Date(now);
+                today.setHours(0, 0, 0, 0);
+                const todayStart = today.getTime();
+                
                 existingChartData = trade.sparkline.map((sparkPrice, index) => {
+                  // Spread points across TODAY (last 24 hours) for real-time view
                   const ratio = index / Math.max(trade.sparkline.length - 1, 1);
-                  const sparkTimestamp = now - (1 - ratio) * 7 * 24 * 60 * 60 * 1000;
+                  const sparkTimestamp = todayStart + ratio * (now - todayStart);
+                  const dateObj = new Date(sparkTimestamp);
+                  
+                  // Format as date time in local timezone
+                  const time = dateObj.toLocaleString([], {
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: false
+                  });
+                  
                   return {
-                    time: new Date(sparkTimestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+                    time: time,
                     price: sparkPrice,
                     timestamp: sparkTimestamp
                   };
@@ -1088,7 +1104,7 @@ const convertToOKXFormat = (symbol) => {
         snapshots.forEach(snapshot => {
           const timestamp = snapshot.timestamp;
           const date = new Date(timestamp);
-          // Format time based on filter - simpler for shorter periods
+          // Format time based on filter - use user's local timezone
           let currentFilter;
           if (filterHours && typeof filterHours === 'number') {
             currentFilter = filterHours;
@@ -1097,13 +1113,13 @@ const convertToOKXFormat = (symbol) => {
           }
           currentFilter = Number(currentFilter) || 24;
           const time = currentFilter <= 1 
-            ? date.toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
-            : date.toLocaleString('en-US', { 
-                month: 'short', 
-                day: 'numeric', 
+            ? date.toLocaleString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+            : date.toLocaleString([], { 
+                month: '2-digit', 
+                day: '2-digit', 
                 hour: '2-digit', 
                 minute: '2-digit',
-                hour12: true 
+                hour12: false 
               });
           
           if (!timeMap.has(timestamp)) {
@@ -1134,13 +1150,13 @@ const convertToOKXFormat = (symbol) => {
         const date = new Date(now);
         const currentFilter = timeFilter === '1h' ? 1 : timeFilter === '6h' ? 6 : 24;
         const time = currentFilter <= 1 
-          ? date.toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
-          : date.toLocaleString('en-US', { 
-              month: 'short', 
-              day: 'numeric', 
+          ? date.toLocaleString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+          : date.toLocaleString([], { 
+              month: '2-digit', 
+              day: '2-digit', 
               hour: '2-digit', 
               minute: '2-digit',
-              hour12: true 
+              hour12: false 
             });
         
         const initialPoint = { time, timestamp: now, fullTime: date };
@@ -1254,13 +1270,13 @@ const convertToOKXFormat = (symbol) => {
           const date = new Date(timestamp);
           const currentFilter = timeFilter === '1h' ? 1 : timeFilter === '6h' ? 6 : 24;
           const time = currentFilter <= 1 
-            ? date.toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
-            : date.toLocaleString('en-US', { 
-                month: 'short', 
-                day: 'numeric', 
+            ? date.toLocaleString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+            : date.toLocaleString([], { 
+                month: '2-digit', 
+                day: '2-digit', 
                 hour: '2-digit', 
                 minute: '2-digit',
-                hour12: true 
+                hour12: false 
               });
           
           if (!timeMap.has(timestamp)) {
@@ -2828,16 +2844,16 @@ const convertToOKXFormat = (symbol) => {
                           <td className="latency-cell">
                             {(() => {
                               let latency = item.latency;
-                              if (latency === null || latency === undefined) {
-                                if (item.lastUpdateTimestamp) {
-                                  latency = Math.max(0, Date.now() - item.lastUpdateTimestamp);
-                                } else {
-                                  return 'N/A';
-                                }
+                              if (item.lastUpdateTimestamp) {
+                                latency = Math.max(0, Date.now() - item.lastUpdateTimestamp);
+                              } else if (latency === null || latency === undefined) {
+                                return 'N/A';
                               }
-                              return latency < 1000 
-                                ? `${Math.round(latency)}ms`
-                                : `${(latency / 1000).toFixed(1)}s`;
+                              if (latency < 10000) {
+                                return `${Math.round(latency)}ms`;
+                              } else {
+                                return `${(latency / 1000).toFixed(1)}s`;
+                              }
                             })()}
                           </td>
                           <td className="graph-cell">
@@ -3005,7 +3021,7 @@ const convertToOKXFormat = (symbol) => {
                   style={{
                     marginTop: '15px',
                     padding: '10px 20px',
-                    background: '#3b82f6',
+                    background: '#78176b',
                     color: 'white',
                     border: 'none',
                     borderRadius: '6px',
@@ -3015,12 +3031,12 @@ const convertToOKXFormat = (symbol) => {
                     transition: 'all 0.2s'
                   }}
                   onMouseEnter={(e) => {
-                    e.target.style.background = '#2563eb';
+                    e.target.style.background = '#5d0f52';
                     e.target.style.transform = 'translateY(-1px)';
-                    e.target.style.boxShadow = '0 4px 8px rgba(59, 130, 246, 0.3)';
+                    e.target.style.boxShadow = '0 4px 8px rgba(120, 23, 107, 0.3)';
                   }}
                   onMouseLeave={(e) => {
-                    e.target.style.background = '#3b82f6';
+                    e.target.style.background = '#78176b';
                     e.target.style.transform = 'translateY(0)';
                     e.target.style.boxShadow = 'none';
                   }}
@@ -3368,7 +3384,14 @@ const convertToOKXFormat = (symbol) => {
     historyData.forEach(item => {
       if (item.chartData && item.chartData.length > 0) {
         item.chartData.forEach(point => {
-          const timeKey = point.time || new Date(point.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+          // Use the time from chartData (already formatted with local timezone) as key
+          const timeKey = point.time || new Date(point.timestamp).toLocaleString([], { 
+            month: '2-digit', 
+            day: '2-digit',
+            hour: '2-digit', 
+            minute: '2-digit',
+            hour12: false 
+          });
           const supply = supplyEstimates[item.symbol] || 1000000000;
           const marketCap = point.price * supply;
           
@@ -3674,45 +3697,45 @@ const convertToOKXFormat = (symbol) => {
         <div className="dashboard-section" style={{ marginTop: '12px' }}>
           <h4 className="section-title">Top Movers (24h)</h4>
           <div className="market-overview-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '20px' }}>
-            <div className="metric-card" style={{ borderRadius: '8px', padding: '14px 16px', minHeight: '170px' }}>
+            <div className="metric-card" style={{ borderRadius: '8px', padding: '16px', minHeight: '200px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <div className="metric-header">
-                <span className="metric-label">Top Gainers</span>
+                <span className="metric-label" style={{ fontSize: '14px', fontWeight: '600' }}>Top Gainers</span>
               </div>
-              <div className="metric-list">
+              <div className="metric-list" style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1 }}>
                 {topGainers.map((coin) => {
                   const name = CRYPTO_NAMES[coin.symbol]?.name || coin.symbol.replace('USDT', '');
                   const pct = coin.change24h || 0;
                   return (
-                    <div key={coin.symbol} className="metric-list-item">
-                      <span className="metric-list-name">{name}</span>
-                      <span className="metric-list-value" style={{ color: '#10b981' }}>
-                        {pct.toFixed(2)}%
+                    <div key={coin.symbol} className="metric-list-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #f0f0f0' }}>
+                      <span className="metric-list-name" style={{ fontSize: '13px', color: '#374151' }}>{name}</span>
+                      <span className="metric-list-value" style={{ color: '#10b981', fontSize: '13px', fontWeight: '600' }}>
+                        +{pct.toFixed(2)}%
                       </span>
                     </div>
                   );
                 })}
-                {topGainers.length === 0 && <div className="metric-list-item">No data</div>}
+                {topGainers.length === 0 && <div className="metric-list-item" style={{ textAlign: 'center', color: '#9ca3af', padding: '20px 0' }}>No data</div>}
               </div>
             </div>
 
-            <div className="metric-card" style={{ borderRadius: '8px', padding: '14px 16px', minHeight: '170px' }}>
+            <div className="metric-card" style={{ borderRadius: '8px', padding: '16px', minHeight: '200px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <div className="metric-header">
-                <span className="metric-label">Top Losers</span>
+                <span className="metric-label" style={{ fontSize: '14px', fontWeight: '600' }}>Top Losers</span>
               </div>
-              <div className="metric-list">
+              <div className="metric-list" style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1 }}>
                 {topLosers.map((coin) => {
                   const name = CRYPTO_NAMES[coin.symbol]?.name || coin.symbol.replace('USDT', '');
                   const pct = coin.change24h || 0;
                   return (
-                    <div key={coin.symbol} className="metric-list-item">
-                      <span className="metric-list-name">{name}</span>
-                      <span className="metric-list-value" style={{ color: '#ef4444' }}>
+                    <div key={coin.symbol} className="metric-list-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #f0f0f0' }}>
+                      <span className="metric-list-name" style={{ fontSize: '13px', color: '#374151' }}>{name}</span>
+                      <span className="metric-list-value" style={{ color: '#ef4444', fontSize: '13px', fontWeight: '600' }}>
                         {pct.toFixed(2)}%
                       </span>
                     </div>
                   );
                 })}
-                {topLosers.length === 0 && <div className="metric-list-item">No data</div>}
+                {topLosers.length === 0 && <div className="metric-list-item" style={{ textAlign: 'center', color: '#9ca3af', padding: '20px 0' }}>No data</div>}
               </div>
             </div>
           </div>

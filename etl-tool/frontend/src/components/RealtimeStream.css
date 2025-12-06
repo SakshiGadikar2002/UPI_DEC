@@ -1120,20 +1120,20 @@
 
 .time-filter-btn:hover {
   background: #f9fafb;
-  border-color: #3b82f6;
-  color: #3b82f6;
+  border-color: #78176b;
+  color: #78176b;
 }
 
 .time-filter-btn.active {
-  background: #3b82f6;
-  border-color: #3b82f6;
+  background: #78176b;
+  border-color: #78176b;
   color: #ffffff;
   font-weight: 600;
 }
 
 .time-filter-btn.active:hover {
-  background: #2563eb;
-  border-color: #2563eb;
+  background: #5d0f52;
+  border-color: #5d0f52;
 }
 
 /* Dashboard Styles */

@@ -190,14 +190,30 @@ export const fetchDetailedMarketData = async () => {
       const sparkline = coin.sparkline_in_7d?.price || [];
       
       // Transform sparkline into chartData points (for mini and full charts)
+      // The sparkline is 7-day historical data - we'll display it as TODAY's intraday data for real-time appearance
       const chartData = sparkline.length > 0
         ? sparkline.map((price, index) => {
-            // Spread points across last 7 days
+            // Spread sparkline points across TODAY (from 00:00 to now) for real-time view
             const now = Date.now();
+            const today = new Date(now);
+            today.setHours(0, 0, 0, 0);
+            const todayStart = today.getTime();
+            
             const ratio = index / Math.max(sparkline.length - 1, 1);
-            const timestamp = now - (1 - ratio) * 7 * 24 * 60 * 60 * 1000;
+            const timestamp = todayStart + ratio * (now - todayStart);
+            const dateObj = new Date(timestamp);
+            
+            // Format with TODAY's date and current time
+            const time = dateObj.toLocaleString([], {
+              month: '2-digit',
+              day: '2-digit',
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: false
+            });
+            
             return {
-              time: new Date(timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+              time: time,
               price: price,
               timestamp
             };

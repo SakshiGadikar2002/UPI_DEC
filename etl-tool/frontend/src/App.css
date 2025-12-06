@@ -9,8 +9,9 @@
   padding: 30px;
   padding-top: 100px;
   min-height: 100vh;
+  margin-left: 70px;
   transition: margin-left 0.3s ease;
-  width: 100%;
+  width: calc(100% - 70px);
   box-sizing: border-box;
   overflow-x: hidden;
 }
