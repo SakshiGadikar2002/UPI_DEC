@@ -8,6 +8,9 @@ from typing import Optional
 from datetime import datetime
 import os
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 # PostgreSQL connection settings
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
@@ -353,3 +356,97 @@ def get_pool():
     if pool is None:
         raise RuntimeError("Database pool not initialized. Call connect_to_postgres() first.")
     return pool
+
+
+async def initialize_scheduled_connectors():
+    """Initialize connector records for scheduled API jobs"""
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+    
+    scheduled_connectors = [
+        {
+            "connector_id": "binance_orderbook",
+            "name": "Binance - Order Book (BTC/USDT)",
+            "api_url": "https://api.binance.com/api/v3/depth?symbol=BTCUSDT",
+            "exchange_name": "Binance",
+            "protocol_type": "REST",
+            "polling_interval": 10000
+        },
+        {
+            "connector_id": "binance_prices",
+            "name": "Binance - Current Prices",
+            "api_url": "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT",
+            "exchange_name": "Binance",
+            "protocol_type": "REST",
+            "polling_interval": 10000
+        },
+        {
+            "connector_id": "binance_24hr",
+            "name": "Binance - 24hr Ticker",
+            "api_url": "https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT",
+            "exchange_name": "Binance",
+            "protocol_type": "REST",
+            "polling_interval": 10000
+        },
+        {
+            "connector_id": "coingecko_global",
+            "name": "CoinGecko - Global Stats",
+            "api_url": "https://api.coingecko.com/api/v3/global",
+            "exchange_name": "CoinGecko",
+            "protocol_type": "REST",
+            "polling_interval": 10000
+        },
+        {
+            "connector_id": "coingecko_top",
+            "name": "CoinGecko - Top Coins",
+            "api_url": "https://api.coingecko.com/api/v3/coins/markets",
+            "exchange_name": "CoinGecko",
+            "protocol_type": "REST",
+            "polling_interval": 10000
+        },
+        {
+            "connector_id": "coingecko_trending",
+            "name": "CoinGecko - Trending",
+            "api_url": "https://api.coingecko.com/api/v3/search/trending",
+            "exchange_name": "CoinGecko",
+            "protocol_type": "REST",
+            "polling_interval": 10000
+        },
+        {
+            "connector_id": "cryptocompare_multi",
+            "name": "CryptoCompare - Multi Price",
+            "api_url": "https://min-api.cryptocompare.com/data/pricemulti",
+            "exchange_name": "CryptoCompare",
+            "protocol_type": "REST",
+            "polling_interval": 10000
+        },
+        {
+            "connector_id": "cryptocompare_top",
+            "name": "CryptoCompare - Top Coins",
+            "api_url": "https://min-api.cryptocompare.com/data/top/mktcapfull",
+            "exchange_name": "CryptoCompare",
+            "protocol_type": "REST",
+            "polling_interval": 10000
+        }
+    ]
+    
+    async with pool.acquire() as conn:
+        for connector in scheduled_connectors:
+            try:
+                await conn.execute("""
+                    INSERT INTO api_connectors 
+                    (connector_id, name, api_url, exchange_name, protocol_type, polling_interval, status)
+                    VALUES ($1, $2, $3, $4, $5, $6, 'active')
+                    ON CONFLICT (connector_id) DO UPDATE SET updated_at = NOW()
+                """, 
+                    connector["connector_id"],
+                    connector["name"],
+                    connector["api_url"],
+                    connector["exchange_name"],
+                    connector["protocol_type"],
+                    connector["polling_interval"]
+                )
+            except Exception as e:
+                logger.error(f"Error initializing connector {connector['connector_id']}: {e}")
+    
+    logger.info("[OK] Initialized 8 scheduled connector records")
