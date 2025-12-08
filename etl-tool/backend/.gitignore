@@ -1,0 +1,77 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pyc
+*.pyo
+*.pyd
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Node modules (frontend)
+node_modules/
+dist/
+.next/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Uploads and Processed Files - Keep structure but ignore actual files
+uploads/csv/*
+uploads/json/*
+uploads/xlsx/*
+processed/csv/*
+processed/json/*
+processed/xlsx/*
+!uploads/csv/.gitkeep
+!uploads/json/.gitkeep
+!uploads/xlsx/.gitkeep
+!processed/csv/.gitkeep
+!processed/json/.gitkeep
+!processed/xlsx/.gitkeep

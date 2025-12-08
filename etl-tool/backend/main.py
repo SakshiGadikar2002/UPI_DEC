@@ -95,13 +95,51 @@ app.add_middleware(
 BASE_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIST = BASE_DIR / "frontend" / "dist"
 
-# Create uploads directory
+# Create uploads directory with subfolders for each file type
 UPLOADS_DIR = BASE_DIR / "backend" / "uploads"
 UPLOADS_DIR.mkdir(exist_ok=True)
 
-# Create processed directory
+# Create uploads subfolders for each file type
+UPLOADS_CSV_DIR = UPLOADS_DIR / "csv"
+UPLOADS_JSON_DIR = UPLOADS_DIR / "json"
+UPLOADS_XLSX_DIR = UPLOADS_DIR / "xlsx"
+UPLOADS_CSV_DIR.mkdir(exist_ok=True)
+UPLOADS_JSON_DIR.mkdir(exist_ok=True)
+UPLOADS_XLSX_DIR.mkdir(exist_ok=True)
+
+# Create processed directory with subfolders for each file type
 PROCESSED_DIR = BASE_DIR / "backend" / "processed"
 PROCESSED_DIR.mkdir(exist_ok=True)
+
+PROCESSED_CSV_DIR = PROCESSED_DIR / "csv"
+PROCESSED_JSON_DIR = PROCESSED_DIR / "json"
+PROCESSED_XLSX_DIR = PROCESSED_DIR / "xlsx"
+PROCESSED_CSV_DIR.mkdir(exist_ok=True)
+PROCESSED_JSON_DIR.mkdir(exist_ok=True)
+PROCESSED_XLSX_DIR.mkdir(exist_ok=True)
+
+# Helper function to get correct directory based on file type
+def get_uploads_dir_by_type(file_ext: str) -> Path:
+    """Get uploads directory based on file type"""
+    ext_lower = file_ext.lower()
+    if ext_lower == 'csv':
+        return UPLOADS_CSV_DIR
+    elif ext_lower == 'json':
+        return UPLOADS_JSON_DIR
+    elif ext_lower in ['xlsx', 'xls']:
+        return UPLOADS_XLSX_DIR
+    return UPLOADS_DIR
+
+def get_processed_dir_by_type(file_ext: str) -> Path:
+    """Get processed directory based on file type"""
+    ext_lower = file_ext.lower()
+    if ext_lower == 'csv':
+        return PROCESSED_CSV_DIR
+    elif ext_lower == 'json':
+        return PROCESSED_JSON_DIR
+    elif ext_lower in ['xlsx', 'xls']:
+        return PROCESSED_XLSX_DIR
+    return PROCESSED_DIR
 
 # Mount static files (CSS, JS, images, etc.)
 if FRONTEND_DIST.exists():
@@ -1626,7 +1664,7 @@ async def websocket_endpoint(websocket: WebSocket):
 # File Upload and Processing Endpoints
 @app.post("/api/files/upload")
 async def upload_file(file: UploadFile = File(...)):
-    """Upload a file (CSV, JSON, or XLSX)"""
+    """Upload a file (CSV, JSON, or XLSX) - saved in organized folders by type"""
     try:
         # Validate file type
         file_ext = file.filename.split('.')[-1].lower()
@@ -1635,7 +1673,10 @@ async def upload_file(file: UploadFile = File(...)):
         
         # Generate unique file ID
         file_id = str(uuid.uuid4())
-        file_path = UPLOADS_DIR / f"{file_id}_{file.filename}"
+        
+        # Get appropriate directory based on file type
+        uploads_type_dir = get_uploads_dir_by_type(file_ext)
+        file_path = uploads_type_dir / f"{file_id}_{file.filename}"
         
         # Save uploaded file
         with open(file_path, "wb") as buffer:
@@ -1644,11 +1685,14 @@ async def upload_file(file: UploadFile = File(...)):
         # Determine source type
         source_type = 'xlsx' if file_ext in ['xlsx', 'xls'] else file_ext
         
+        logger.info(f"[FILE UPLOAD] Uploaded {file.filename} (ID: {file_id}) to {uploads_type_dir}")
+        
         return {
             "file_id": file_id,
             "filename": file.filename,
             "file_path": str(file_path),
             "source_type": source_type,
+            "file_type": file_ext,
             "transformations": []  # Default empty transformations
         }
     except Exception as e:
@@ -1669,8 +1713,11 @@ async def preview_file(request: Dict[str, str]):
         if not file_id:
             raise HTTPException(status_code=400, detail="file_id is required")
         
-        # Find the uploaded file
-        uploaded_files = list(UPLOADS_DIR.glob(f"{file_id}_*"))
+        # Search in all upload type directories
+        uploaded_files = []
+        for uploads_subdir in [UPLOADS_CSV_DIR, UPLOADS_JSON_DIR, UPLOADS_XLSX_DIR]:
+            uploaded_files.extend(uploads_subdir.glob(f"{file_id}_*"))
+        
         if not uploaded_files:
             raise HTTPException(status_code=404, detail="File not found")
         
@@ -1692,6 +1739,7 @@ async def preview_file(request: Dict[str, str]):
             "totalColumns": len(df.columns)
         }
         
+        logger.info(f"[FILE PREVIEW] Previewed {file_id}")
         return {"preview": preview}
     except Exception as e:
         logger.error(f"Error previewing file: {e}")
@@ -1702,10 +1750,18 @@ async def preview_file(request: Dict[str, str]):
 
 @app.post("/api/files/process")
 async def process_file(request: ProcessFileRequest):
-    """Process an uploaded file through the ETL pipeline"""
+    """Process an uploaded file through the ETL pipeline and save to organized folders"""
     try:
-        # Find the uploaded file
-        uploaded_files = list(UPLOADS_DIR.glob(f"{request.file_id}_*"))
+        # Search in all upload type directories
+        uploaded_files = []
+        file_type_found = None
+        for file_type, uploads_subdir in [('csv', UPLOADS_CSV_DIR), ('json', UPLOADS_JSON_DIR), ('xlsx', UPLOADS_XLSX_DIR)]:
+            found_files = list(uploads_subdir.glob(f"{request.file_id}_*"))
+            if found_files:
+                uploaded_files = found_files
+                file_type_found = file_type
+                break
+        
         if not uploaded_files:
             raise HTTPException(status_code=404, detail="File not found")
         
@@ -1756,7 +1812,10 @@ async def process_file(request: ProcessFileRequest):
         # Generate output file
         output_file_id = str(uuid.uuid4())
         output_filename = f"{output_file_id}_processed.xlsx"
-        output_path = PROCESSED_DIR / output_filename
+        
+        # Get appropriate processed directory based on file type
+        processed_type_dir = get_processed_dir_by_type(file_ext)
+        output_path = processed_type_dir / output_filename
         
         # Load to XLSX
         Loader.load(transformed_df, "xlsx", {"file_path": str(output_path)})
@@ -1792,6 +1851,8 @@ async def process_file(request: ProcessFileRequest):
         # Convert output data to records for frontend
         output_data = transformed_df.to_dict(orient='records')
         
+        logger.info(f"[FILE PROCESS] Processed {request.file_id} ({file_type_found}) -> {output_filename}")
+        
         return {
             "status": "success",
             "input_preview": input_preview,
@@ -1802,7 +1863,8 @@ async def process_file(request: ProcessFileRequest):
             "output_data": output_data,
             "duplicate_count": duplicate_count,
             "rows_before": initial_rows,
-            "rows_after": rows_after_transform
+            "rows_after": rows_after_transform,
+            "file_type": file_type_found
         }
     except Exception as e:
         logger.error(f"Error processing file: {e}")
@@ -1815,12 +1877,16 @@ async def process_file(request: ProcessFileRequest):
 async def download_file(file_id: str):
     """Download a processed file"""
     try:
-        # Find the processed file
-        processed_files = list(PROCESSED_DIR.glob(f"{file_id}_*"))
+        # Search in all processed type directories
+        processed_files = []
+        for processed_subdir in [PROCESSED_CSV_DIR, PROCESSED_JSON_DIR, PROCESSED_XLSX_DIR]:
+            processed_files.extend(processed_subdir.glob(f"{file_id}_*"))
+        
         if not processed_files:
             raise HTTPException(status_code=404, detail="File not found")
         
         file_path = processed_files[0]
+        logger.info(f"[FILE DOWNLOAD] Downloaded {file_id}")
         return FileResponse(
             path=str(file_path),
             filename=file_path.name,
