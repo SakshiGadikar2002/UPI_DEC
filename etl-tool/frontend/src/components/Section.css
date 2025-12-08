@@ -957,7 +957,7 @@
 }
 
 .quick-connect-btn:hover:not(:disabled) {
-  border-color: #007bff;
+  border-color: #78176b;
   background: #f8f9ff;
   box-shadow: 0 2px 4px rgba(0, 123, 255, 0.1);
 }
@@ -968,7 +968,7 @@
 }
 
 .quick-connect-title {
-  color: #007bff;
+  color: #78176b;
   font-weight: 600;
   font-size: 0.95rem;
   margin-bottom: 4px;
