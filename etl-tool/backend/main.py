@@ -31,17 +31,51 @@ from models.connector import (
 from services.encryption import get_encryption_service
 from services.connector_manager import get_connector_manager
 from services.message_processor import MessageProcessor
+from job_scheduler import start_job_scheduler, stop_job_scheduler
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Global job scheduler reference
+_job_scheduler = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Connect to PostgreSQL
     await connect_to_postgres()
+    
+    # Initialize scheduled connector records
+    try:
+        from database import initialize_scheduled_connectors
+        await initialize_scheduled_connectors()
+    except Exception as e:
+        logger.warning(f"[STARTUP] Could not initialize scheduled connectors: {e}")
+    
+    # Schedule job scheduler startup to run after the app is ready
+    # This gives us access to the save_to_database function
+    def start_scheduler_later():
+        try:
+            loop = asyncio.get_event_loop()
+            start_job_scheduler(loop, save_to_database)
+            logger.info("[STARTUP] Job scheduler initialized and running")
+        except Exception as e:
+            logger.error(f"[STARTUP] Failed to start job scheduler: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # Run scheduler start in the event loop after a brief delay to ensure app is ready
+    asyncio.get_event_loop().call_soon(start_scheduler_later)
+    
     yield
-    # Shutdown: Close PostgreSQL connection
+    
+    # Shutdown: Stop job scheduler and close PostgreSQL connection
+    try:
+        stop_job_scheduler()
+        logger.info("[SHUTDOWN] Job scheduler stopped successfully")
+    except Exception as e:
+        logger.error(f"[SHUTDOWN] Error stopping job scheduler: {e}")
+    
     await close_postgres_connection()
 
 
@@ -152,18 +186,45 @@ async def save_to_database(message: dict):
             session_id = message.get("session_id", str(uuid.uuid4()))
             
             # Insert into api_connector_data table (dedicated table for API connector data)
-            inserted_id = await conn.fetchval("""
-                INSERT INTO api_connector_data (
-                    connector_id, timestamp, exchange, instrument, price, data, 
-                    message_type, raw_response, status_code, response_time_ms, source_id, session_id
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-                RETURNING id
-            """, 
-                connector_id, timestamp, exchange, instrument, price, 
-                json.dumps(data), message_type, 
-                json.dumps(raw_response) if raw_response else None,
-                status_code, response_time_ms, source_id, session_id
-            )
+            # Try with foreign key constraint first; if fails (scheduled APIs), insert without it
+            try:
+                inserted_id = await conn.fetchval("""
+                    INSERT INTO api_connector_data (
+                        connector_id, timestamp, exchange, instrument, price, data, 
+                        message_type, raw_response, status_code, response_time_ms, source_id, session_id
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    RETURNING id
+                """, 
+                    connector_id, timestamp, exchange, instrument, price, 
+                    json.dumps(data), message_type, 
+                    json.dumps(raw_response) if raw_response else None,
+                    status_code, response_time_ms, source_id, session_id
+                )
+            except Exception as fk_error:
+                # If foreign key constraint fails (e.g., for scheduled APIs), try inserting with NULL connector_id reference
+                # This allows scheduled API data to be stored without requiring a connector record
+                if "foreign key constraint" in str(fk_error).lower():
+                    logger.debug(f"[OK] Inserting scheduled API data (bypassing FK constraint): {connector_id}")
+                    try:
+                        # Insert directly without FK constraint by using a special marker
+                        inserted_id = await conn.fetchval("""
+                            INSERT INTO api_connector_data (
+                                connector_id, timestamp, exchange, instrument, price, data, 
+                                message_type, raw_response, status_code, response_time_ms, source_id, session_id
+                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                            RETURNING id
+                        """, 
+                            f"scheduled_{connector_id}", timestamp, exchange, instrument, price, 
+                            json.dumps(data), message_type, 
+                            json.dumps(raw_response) if raw_response else None,
+                            status_code, response_time_ms, source_id, session_id
+                        )
+                        connector_id = f"scheduled_{connector_id}"
+                    except Exception as retry_error:
+                        logger.error(f"[ERROR] Failed to insert scheduled API data even with marker: {retry_error}")
+                        raise
+                else:
+                    raise
             
             # Also insert into websocket_messages for backward compatibility
             await conn.execute("""
@@ -234,6 +295,32 @@ message_processor = MessageProcessor(
 
 # Initialize connector manager with message processor
 connector_manager = get_connector_manager(message_processor)
+
+
+# ==================== Job Scheduler Setup ====================
+@app.on_event("startup")
+async def startup_job_scheduler():
+    """Start job scheduler on application startup."""
+    global _job_scheduler
+    try:
+        loop = asyncio.get_event_loop()
+        _job_scheduler = start_job_scheduler(loop, save_to_database)
+        logger.info("[STARTUP] Job scheduler initialized and running")
+    except Exception as e:
+        logger.error(f"[STARTUP] Failed to start job scheduler: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+@app.on_event("shutdown")
+async def shutdown_job_scheduler():
+    """Stop job scheduler on application shutdown."""
+    try:
+        stop_job_scheduler()
+        logger.info("[SHUTDOWN] Job scheduler stopped successfully")
+    except Exception as e:
+        logger.error(f"[SHUTDOWN] Error stopping job scheduler: {e}")
+# ================================================================
 
 
 class ETLJobRequest(BaseModel):
