@@ -63,24 +63,25 @@ pool = await asyncpg.create_pool(
 ## Schema Overview
 
 The database contains tables for:
-- API connector configurations
-- API response data
-- WebSocket real-time messages
-- File uploads and processing
-- Connector status tracking
+- API connector configurations (`api_connectors`)
+- API aggregate responses (`api_connector_data`) - one row per API call
+- API individual items (`api_connector_items`) - multiple rows per API call (granular data)
+- WebSocket real-time messages (`websocket_messages`, `websocket_batches`)
+- File uploads and processing (`files`, `file_data`)
+- Connector status tracking (`connector_status`)
 
 ### Entity Relationship Diagram
 
 ```
 api_connectors (1)
-    ↓
-api_connector_data (many)
+    ├─→ api_connector_data (many) - aggregate responses
+    └─→ api_connector_items (many) - individual items from responses
 
-websocket_data (standalone)
+websocket_messages (standalone)
+websocket_batches (standalone)
 
 files (1)
-    ↓
-file_data (many)
+    └─→ file_data (many)
 ```
 
 ## Tables
@@ -161,7 +162,98 @@ ORDER BY timestamp DESC
 LIMIT 10;
 ```
 
-### 3. websocket_data
+### 3. api_connector_items
+
+**NEW TABLE** - Stores individual items extracted from API responses. This provides granular, queryable data instead of storing entire JSON blobs.
+
+```sql
+CREATE TABLE api_connector_items (
+    id SERIAL PRIMARY KEY,
+    connector_id VARCHAR(100) NOT NULL,
+    api_name VARCHAR(255) NOT NULL,
+    timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    exchange VARCHAR(50),
+    coin_name VARCHAR(100),
+    coin_symbol VARCHAR(20),
+    price DECIMAL(20, 8),
+    market_cap DECIMAL(20, 2),
+    volume_24h DECIMAL(20, 2),
+    price_change_24h DECIMAL(10, 4),
+    market_cap_rank INTEGER,
+    item_data JSONB NOT NULL,
+    raw_item JSONB,
+    item_index INTEGER,
+    response_time_ms DECIMAL(10, 3),
+    source_id VARCHAR(50),
+    session_id VARCHAR(100),
+    FOREIGN KEY (connector_id) REFERENCES api_connectors(connector_id) ON DELETE CASCADE
+);
+```
+
+**Purpose:** While `api_connector_data` stores one row per API call (entire response as JSON), this table stores **one row per item** in the response.
+
+**Example:**
+- Binance 24hr API returns 1000+ trading pairs → 1000+ rows inserted per run
+- CoinGecko Top returns 100 coins → 100 rows inserted per run
+- Every 10 seconds, **thousands of individual item rows** are added
+
+**Columns:**
+- `connector_id` - Which API (e.g., "binance_24hr", "coingecko_top")
+- `api_name` - Human-readable API name
+- `timestamp` - When data was received
+- `exchange` - Exchange name
+- `coin_name` - Full coin name (e.g., "Bitcoin")
+- `coin_symbol` - Ticker symbol (e.g., "BTC")
+- `price` - Current price (numeric, queryable)
+- `market_cap` - Market capitalization
+- `volume_24h` - 24-hour trading volume
+- `price_change_24h` - 24-hour price change percentage
+- `market_cap_rank` - Rank by market cap
+- `item_data` - Full normalized item as JSON
+- `raw_item` - Original item from API response
+- `item_index` - Position in API response array
+- `response_time_ms` - API response time
+
+**Sample Queries:**
+```sql
+-- Get all Bitcoin data from all sources
+SELECT api_name, coin_symbol, price, timestamp
+FROM api_connector_items
+WHERE coin_symbol = 'BTC'
+ORDER BY timestamp DESC
+LIMIT 50;
+
+-- Get top 10 coins by market cap from latest run
+SELECT coin_name, coin_symbol, price, market_cap_rank, timestamp
+FROM api_connector_items
+WHERE market_cap_rank IS NOT NULL
+ORDER BY timestamp DESC, market_cap_rank ASC
+LIMIT 100;
+
+-- Count items from each API per minute
+SELECT api_name, DATE_TRUNC('minute', timestamp), COUNT(*)
+FROM api_connector_items
+GROUP BY api_name, DATE_TRUNC('minute', timestamp)
+ORDER BY timestamp DESC;
+
+-- Get price history for a specific coin
+SELECT api_name, price, timestamp
+FROM api_connector_items
+WHERE coin_symbol = 'ETH'
+ORDER BY timestamp DESC
+LIMIT 100;
+```
+
+**Indexes** (for performance):
+```sql
+CREATE INDEX idx_api_connector_items_connector_id ON api_connector_items(connector_id);
+CREATE INDEX idx_api_connector_items_timestamp ON api_connector_items(timestamp DESC);
+CREATE INDEX idx_api_connector_items_coin_symbol ON api_connector_items(coin_symbol);
+CREATE INDEX idx_api_connector_items_exchange ON api_connector_items(exchange);
+CREATE INDEX idx_api_connector_items_connector_timestamp ON api_connector_items(connector_id, timestamp DESC);
+```
+
+### 4. websocket_data
 
 Stores real-time WebSocket messages.
 
@@ -194,7 +286,7 @@ CREATE TABLE websocket_data (
 
 **Storage:** Unlimited (grows continuously)
 
-### 4. files
+### 5. files
 
 Metadata for uploaded files.
 

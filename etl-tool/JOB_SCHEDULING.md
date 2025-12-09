@@ -77,7 +77,9 @@ The job scheduler automatically executes multiple APIs in parallel at fixed inte
 ### Execution Flow
 
 1. **Startup** (Backend Start)
-   - Initialize `JobScheduler` instance
+   - Initialize `JobScheduler` instance with TWO callbacks:
+     - `save_to_database` - saves aggregate API response
+     - `save_api_items_to_database` - saves individual items from response
    - Create ThreadPoolExecutor with 8 workers
    - Schedule first batch immediately
    - Register repeating schedule every 10s
@@ -92,49 +94,67 @@ The job scheduler automatically executes multiple APIs in parallel at fixed inte
    - Make HTTP request
    - Parse response
    - Create message dict with metadata
-   - Schedule async save callback
+   - **Invoke TWO callbacks** (not one):
+     - `save_to_database()` for aggregate data
+     - `save_api_items_to_database()` for individual items
 
-4. **Database Save** (Async)
-   - INSERT into `api_connector_data`
+4. **Database Save - Aggregate** (Async)
+   - INSERT into `api_connector_data` (1 row per API call)
+   - Stores entire response as JSON
    - UPDATE `api_connectors.updated_at`
+
+5. **Database Save - Granular** (Async)
+   - Extract individual items from response
+   - INSERT into `api_connector_items` (100-1000s of rows per API call)
+   - Parse different API response formats:
+     - **CoinGecko**: Extract coin array → individual rows
+     - **Binance**: Extract trading pairs/prices → individual rows
+     - **CryptoCompare**: Extract symbol data → individual rows
    - Handle errors gracefully
    - Log results
 
-5. **Shutdown** (Backend Stop)
+6. **Shutdown** (Backend Stop)
    - Stop accepting new jobs
    - Wait for in-flight requests
    - Shutdown executor gracefully
    - Close database connections
 
-## Scheduled APIs
+### Dual-Callback Architecture
 
-### Current Scheduled APIs (8)
+The job scheduler now uses **TWO callbacks** for data persistence:
 
 ```python
-SCHEDULED_APIS = [
-    {
-        "id": "binance_orderbook",
-        "name": "Binance - Order Book (BTC/USDT)",
-        "url": "https://api.binance.com/api/v3/depth?symbol=BTCUSDT",
-        "method": "GET"
-    },
-    {
-        "id": "binance_prices",
-        "name": "Binance - Current Prices",
-        "url": "https://api.binance.com/api/v3/ticker/price",
-        "method": "GET"
-    },
-    {
-        "id": "binance_24hr",
-        "name": "Binance - 24hr Ticker",
-        "url": "https://api.binance.com/api/v3/ticker/24hr",
-        "method": "GET"
-    },
-    {
-        "id": "coingecko_global",
-        "name": "CoinGecko - Global Market",
-        "url": "https://api.coingecko.com/api/v3/global",
-        "method": "GET"
+# Callback 1: Aggregate Data (Original)
+save_to_database(connector_id, api_name, response_data, response_time_ms)
+├─ Purpose: Store complete API response as JSON blob
+├─ Destination: api_connector_data table
+└─ Volume: 1 row per 10-second interval
+
+# Callback 2: Granular Items (NEW)
+save_api_items_to_database(connector_id, api_name, response_data, response_time_ms)
+├─ Purpose: Extract and store individual items
+├─ Destination: api_connector_items table
+├─ Volume: 100-1000+ rows per 10-second interval
+└─ Logic: Parse 8 different API response formats
+```
+
+### Item Extraction Logic
+
+For each API, items are extracted from different response structures:
+
+| API | Response Format | Items Per Call | Example |
+|-----|-----------------|----------------|---------|
+| Binance 24hr | Array of 1000+ objects | ~1000+ | Trading pairs with OHLCV |
+| Binance Prices | Array of all symbols | ~1400+ | Symbol + Price |
+| CoinGecko Top | Array of 100 coins | ~100 | Coins with price/market cap |
+| CoinGecko Trending | Array of trending | ~7-20 | Top trending coins |
+| CoinGecko Global | Single object metrics | ~5 | Global stats extracted |
+| CryptoCompare Multi | Symbol object keys | ~10 | BTC, ETH, BNB prices |
+| CryptoCompare Top | Array of 10 coins | ~10 | Top coins with data |
+
+**Total Data Points Per 10 Seconds:** 3,000+ items across all APIs
+
+
     },
     {
         "id": "coingecko_top",

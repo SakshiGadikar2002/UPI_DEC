@@ -84,16 +84,18 @@ class JobScheduler:
     - Thread-safe startup/shutdown
     """
     
-    def __init__(self, event_loop: asyncio.AbstractEventLoop, save_callback: Callable):
+    def __init__(self, event_loop: asyncio.AbstractEventLoop, save_callback: Callable, save_items_callback: Callable = None):
         """
         Initialize the job scheduler.
         
         Args:
             event_loop: asyncio event loop for scheduling async callbacks
             save_callback: async function to call with API result message
+            save_items_callback: async function to call with individual items from API response
         """
         self.event_loop = event_loop
         self.save_callback = save_callback
+        self.save_items_callback = save_items_callback
         self.executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
         self.is_running = False
         self._schedule_handle = None
@@ -156,6 +158,24 @@ class JobScheduler:
                     self.save_callback(message),
                     self.event_loop
                 )
+                
+                # Also save individual items if callback provided
+                if self.save_items_callback:
+                    logger.info(f"[JOB] Calling items callback for {api_id}...")
+                    if isinstance(data, (list, dict)):
+                        try:
+                            asyncio.run_coroutine_threadsafe(
+                                self.save_items_callback(api_id, api_name, data, response_time_ms),
+                                self.event_loop
+                            )
+                            logger.info(f"[JOB] Items callback scheduled for {api_id}")
+                        except Exception as callback_error:
+                            logger.error(f"[JOB] Error scheduling items callback: {callback_error}")
+                    else:
+                        logger.warning(f"[JOB] Data is not list/dict for {api_id}, skipping items callback")
+                else:
+                    logger.warning(f"[JOB] save_items_callback is None!")
+                
                 logger.info(f"[JOB] Saved result: {api_name} ({response.status_code}) in {response_time_ms}ms")
             except Exception as e:
                 logger.error(f"[JOB] Failed to schedule save callback: {e}")
@@ -232,13 +252,14 @@ class JobScheduler:
 _scheduler: JobScheduler = None
 
 
-def start_job_scheduler(event_loop: asyncio.AbstractEventLoop, save_callback: Callable) -> JobScheduler:
+def start_job_scheduler(event_loop: asyncio.AbstractEventLoop, save_callback: Callable, save_items_callback: Callable = None) -> JobScheduler:
     """
     Start the global job scheduler.
     
     Args:
         event_loop: asyncio event loop
         save_callback: async callback function to save results
+        save_items_callback: optional async callback to save individual items
     
     Returns:
         JobScheduler instance
@@ -249,7 +270,7 @@ def start_job_scheduler(event_loop: asyncio.AbstractEventLoop, save_callback: Ca
         logger.warning("[JOB] Scheduler already started")
         return _scheduler
     
-    _scheduler = JobScheduler(event_loop, save_callback)
+    _scheduler = JobScheduler(event_loop, save_callback, save_items_callback)
     _scheduler.start()
     return _scheduler
 

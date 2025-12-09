@@ -262,12 +262,77 @@ GET /api/connectors/{id}/status # Connector status
 
 ### Data Operations
 ```
-GET /api/data/                      # Get all data
-GET /api/data/{connector_id}        # Get data by connector
-POST /api/data/extract              # Extract from URL
-POST /api/data/upload               # Upload file
-GET /api/data/{connector_id}/latest # Latest data
+GET /api/data/                           # Get all aggregate data
+GET /api/data/{connector_id}             # Get aggregate data by connector
+GET /api/data/items                      # Get all granular items [NEW]
+GET /api/data/items/{connector_id}       # Get items by connector [NEW]
+GET /api/data/items/symbol/{symbol}      # Get items by coin symbol [NEW]
+POST /api/data/extract                   # Extract from URL
+POST /api/data/upload                    # Upload file
+GET /api/data/{connector_id}/latest      # Latest aggregate data
+GET /api/data/{connector_id}/items/latest # Latest items [NEW]
 ```
+
+### New Granular Data Endpoints [NEW]
+
+```
+GET /api/data/items
+    Query Parameters:
+    - limit (default: 100)
+    - offset (default: 0)
+    - connector_id (optional filter)
+    - symbol (optional coin symbol filter)
+    - order (default: timestamp DESC)
+    
+    Response:
+    {
+        "items": [
+            {
+                "connector_id": "binance_24hr",
+                "api_name": "Binance - 24hr Ticker",
+                "coin_symbol": "BTC",
+                "coin_name": "Bitcoin",
+                "price": 95000.50,
+                "market_cap": 1900000000000,
+                "volume_24h": 45000000000,
+                "price_change_24h": 2.5,
+                "market_cap_rank": 1,
+                "timestamp": "2025-12-08T16:00:00Z"
+            },
+            ...
+        ],
+        "total": 3000,
+        "limit": 100,
+        "offset": 0
+    }
+
+GET /api/data/items/{connector_id}
+    Returns granular items for specific API connector
+
+GET /api/data/items/symbol/{symbol}
+    Returns all items with matching coin symbol
+```
+
+### Item Data Structure
+
+```json
+{
+    "id": 12345,
+    "connector_id": "binance_24hr",
+    "api_name": "Binance - 24hr Ticker",
+    "exchange": "binance",
+    "coin_name": "Bitcoin",
+    "coin_symbol": "BTC",
+    "price": 95000.50,
+    "market_cap": 1900000000000,
+    "volume_24h": 45000000000,
+    "price_change_24h": 2.5,
+    "market_cap_rank": 1,
+    "timestamp": "2025-12-08T16:00:00Z",
+    "response_time_ms": 145
+}
+```
+
 
 ### File Processing
 ```
@@ -546,5 +611,5 @@ uvicorn main:app --port 8001
 
 ---
 
-**Last Updated**: December 8, 2025  
+**Last Updated**: December 9, 2025  
 **Version**: 1.0.0

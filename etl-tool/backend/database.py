@@ -343,6 +343,53 @@ async def _initialize_tables():
             ON api_connector_data(connector_id, timestamp DESC)
         """)
         
+        # Create api_connector_items table for granular individual items from API responses
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS api_connector_items (
+                id SERIAL PRIMARY KEY,
+                connector_id VARCHAR(100) NOT NULL,
+                api_name VARCHAR(255) NOT NULL,
+                timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                exchange VARCHAR(50),
+                coin_name VARCHAR(100),
+                coin_symbol VARCHAR(20),
+                price DECIMAL(20, 8),
+                market_cap DECIMAL(20, 2),
+                volume_24h DECIMAL(20, 2),
+                price_change_24h DECIMAL(10, 4),
+                market_cap_rank INTEGER,
+                item_data JSONB NOT NULL,
+                raw_item JSONB,
+                item_index INTEGER,
+                response_time_ms DECIMAL(10, 3),
+                source_id VARCHAR(50),
+                session_id VARCHAR(100),
+                FOREIGN KEY (connector_id) REFERENCES api_connectors(connector_id) ON DELETE CASCADE
+            )
+        """)
+        
+        # Create indexes for api_connector_items
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_api_connector_items_connector_id 
+            ON api_connector_items(connector_id)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_api_connector_items_timestamp 
+            ON api_connector_items(timestamp DESC)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_api_connector_items_coin_symbol 
+            ON api_connector_items(coin_symbol)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_api_connector_items_exchange 
+            ON api_connector_items(exchange)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_api_connector_items_connector_timestamp 
+            ON api_connector_items(connector_id, timestamp DESC)
+        """)
+        
         print("[OK] Initialized PostgreSQL tables with indexes")
 
 

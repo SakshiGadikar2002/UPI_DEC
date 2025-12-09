@@ -17,6 +17,7 @@ from pathlib import Path
 import pandas as pd
 import shutil
 import time
+import hashlib
 
 from etl.extractor import Extractor
 from etl.transformer import Transformer
@@ -31,7 +32,119 @@ from models.connector import (
 from services.encryption import get_encryption_service
 from services.connector_manager import get_connector_manager
 from services.message_processor import MessageProcessor
+
 from job_scheduler import start_job_scheduler, stop_job_scheduler
+
+# --- Auto-insert scheduled API connectors if missing ---
+import asyncio as _asyncio
+SCHEDULED_APIS = [
+    {
+        "connector_id": "binance_orderbook",
+        "name": "Binance - Order Book (BTC/USDT)",
+        "api_url": "https://api.binance.com/api/v3/depth?symbol=BTCUSDT",
+        "http_method": "GET",
+        "auth_type": "None",
+        "status": "active",
+        "polling_interval": 10000,
+        "protocol_type": "REST",
+        "exchange_name": "Binance"
+    },
+    {
+        "connector_id": "binance_prices",
+        "name": "Binance - Current Prices",
+        "api_url": "https://api.binance.com/api/v3/ticker/price",
+        "http_method": "GET",
+        "auth_type": "None",
+        "status": "active",
+        "polling_interval": 10000,
+        "protocol_type": "REST",
+        "exchange_name": "Binance"
+    },
+    {
+        "connector_id": "binance_24hr",
+        "name": "Binance - 24hr Ticker",
+        "api_url": "https://api.binance.com/api/v3/ticker/24hr",
+        "http_method": "GET",
+        "auth_type": "None",
+        "status": "active",
+        "polling_interval": 10000,
+        "protocol_type": "REST",
+        "exchange_name": "Binance"
+    },
+    {
+        "connector_id": "coingecko_global",
+        "name": "CoinGecko - Global Market",
+        "api_url": "https://api.coingecko.com/api/v3/global",
+        "http_method": "GET",
+        "auth_type": "None",
+        "status": "active",
+        "polling_interval": 10000,
+        "protocol_type": "REST",
+        "exchange_name": "CoinGecko"
+    },
+    {
+        "connector_id": "coingecko_top",
+        "name": "CoinGecko - Top Cryptocurrencies",
+        "api_url": "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&page=1&sparkline=false",
+        "http_method": "GET",
+        "auth_type": "None",
+        "status": "active",
+        "polling_interval": 10000,
+        "protocol_type": "REST",
+        "exchange_name": "CoinGecko"
+    },
+    {
+        "connector_id": "coingecko_trending",
+        "name": "CoinGecko - Trending Coins",
+        "api_url": "https://api.coingecko.com/api/v3/search/trending",
+        "http_method": "GET",
+        "auth_type": "None",
+        "status": "active",
+        "polling_interval": 10000,
+        "protocol_type": "REST",
+        "exchange_name": "CoinGecko"
+    },
+    {
+        "connector_id": "cryptocompare_multi",
+        "name": "CryptoCompare - Multi Price",
+        "api_url": "https://min-api.cryptocompare.com/data/pricemulti?fsyms=BTC,ETH,BNB&tsyms=USD",
+        "http_method": "GET",
+        "auth_type": "None",
+        "status": "active",
+        "polling_interval": 10000,
+        "protocol_type": "REST",
+        "exchange_name": "CryptoCompare"
+    },
+    {
+        "connector_id": "cryptocompare_top",
+        "name": "CryptoCompare - Top Coins",
+        "api_url": "https://min-api.cryptocompare.com/data/top/mktcapfull?limit=10&tsym=USD",
+        "http_method": "GET",
+        "auth_type": "None",
+        "status": "active",
+        "polling_interval": 10000,
+        "protocol_type": "REST",
+        "exchange_name": "CryptoCompare"
+    }
+]
+
+async def ensure_scheduled_connectors():
+    pool = get_pool()
+    async with pool.acquire() as conn:
+        for api in SCHEDULED_APIS:
+            exists = await conn.fetchval(
+                "SELECT 1 FROM api_connectors WHERE connector_id = $1", api["connector_id"]
+            )
+            if not exists:
+                await conn.execute(
+                    """
+                    INSERT INTO api_connectors (connector_id, name, api_url, http_method, auth_type, status, polling_interval, protocol_type, exchange_name)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    """,
+                    api["connector_id"], api["name"], api["api_url"], api["http_method"], api["auth_type"], api["status"], api["polling_interval"], api["protocol_type"], api["exchange_name"]
+                )
+                logger.info(f"[INIT] Inserted scheduled connector: {api['connector_id']}")
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -57,7 +170,7 @@ async def lifespan(app: FastAPI):
     def start_scheduler_later():
         try:
             loop = asyncio.get_event_loop()
-            start_job_scheduler(loop, save_to_database)
+            start_job_scheduler(loop, save_to_database, save_api_items_to_database)
             logger.info("[STARTUP] Job scheduler initialized and running")
         except Exception as e:
             logger.error(f"[STARTUP] Failed to start job scheduler: {e}")
@@ -191,22 +304,252 @@ class ConnectionManager:
 connection_manager = ConnectionManager()
 
 # Initialize message processor with callbacks
+async def save_api_items_to_database(connector_id: str, api_name: str, response_data: dict, response_time_ms: int):
+    """Save individual items from API response to api_connector_items table"""
+    try:
+        logger.info(f"[ITEMS] 🔄 Processing items for {connector_id} ({api_name})...")
+        pool = get_pool()
+        items_inserted = 0
+        
+        async with pool.acquire() as conn:
+            # Helper function to extract items from different API formats
+            items = _extract_api_items(connector_id, response_data)
+            logger.info(f"[ITEMS] Extracted {len(items)} items from {connector_id}")
+            
+            timestamp = datetime.utcnow()
+            source_id = hashlib.md5(f"{connector_id}_{timestamp}".encode()).hexdigest()[:16]
+            session_id = str(uuid.uuid4())
+            
+            for idx, item in enumerate(items):
+                try:
+                    coin_name = item.get("coin_name", "-")
+                    coin_symbol = item.get("coin_symbol", "-")
+                    price = item.get("price")
+                    market_cap = item.get("market_cap")
+                    volume_24h = item.get("volume_24h")
+                    price_change_24h = item.get("price_change_24h")
+                    market_cap_rank = item.get("market_cap_rank")
+                    
+                    # Ensure price is not None
+                    if price is None:
+                        price = 0.0
+                    
+                    await conn.execute("""
+                        INSERT INTO api_connector_items (
+                            connector_id, api_name, timestamp, exchange, coin_name, coin_symbol,
+                            price, market_cap, volume_24h, price_change_24h, market_cap_rank,
+                            item_data, raw_item, item_index, response_time_ms, source_id, session_id
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                    """,
+                        connector_id, api_name, timestamp, "scheduled_api",
+                        coin_name, coin_symbol, price, market_cap, volume_24h, price_change_24h, market_cap_rank,
+                        json.dumps(item), json.dumps(item.get("raw_item", {})), idx, response_time_ms, source_id, session_id
+                    )
+                    items_inserted += 1
+                except Exception as item_error:
+                    logger.warning(f"[ITEMS] Failed to insert item {idx} for {connector_id}: {item_error}")
+                    continue
+            
+            if items_inserted > 0:
+                logger.info(f"[ITEMS] ✅ Inserted {items_inserted} items from {api_name} ({connector_id})")
+            else:
+                logger.warning(f"[ITEMS] ⚠️ No items inserted for {connector_id}")
+    
+    except Exception as e:
+        logger.error(f"[ITEMS] ❌ Error saving API items: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+def _extract_api_items(connector_id: str, response_data: dict) -> List[dict]:
+    """
+    Extract individual items from various API response formats.
+    Returns a list of normalized item dictionaries.
+    """
+    items = []
+    
+    try:
+        # CoinGecko markets format: list of coins with price, market_cap, etc.
+        if connector_id == "coingecko_top" and isinstance(response_data, list):
+            for item in response_data:
+                items.append({
+                    "coin_name": item.get("name", "-"),
+                    "coin_symbol": item.get("symbol", "-").upper(),
+                    "price": item.get("current_price"),
+                    "market_cap": item.get("market_cap"),
+                    "volume_24h": item.get("total_volume"),
+                    "price_change_24h": item.get("price_change_percentage_24h"),
+                    "market_cap_rank": item.get("market_cap_rank"),
+                    "raw_item": item
+                })
+        
+        # CoinGecko trending format
+        elif connector_id == "coingecko_trending" and isinstance(response_data, dict):
+            coins = response_data.get("coins", [])
+            for item in coins:
+                coin_data = item.get("item", {})
+                items.append({
+                    "coin_name": coin_data.get("name", "-"),
+                    "coin_symbol": coin_data.get("symbol", "-").upper(),
+                    "price": coin_data.get("data", {}).get("price"),
+                    "market_cap_rank": coin_data.get("market_cap_rank"),
+                    "raw_item": coin_data
+                })
+        
+        # Binance ticker 24hr format: list of symbols with prices
+        elif connector_id == "binance_24hr" and isinstance(response_data, list):
+            for item in response_data:
+                symbol = item.get("symbol", "-")
+                items.append({
+                    "coin_name": symbol,
+                    "coin_symbol": symbol,
+                    "price": float(item.get("lastPrice", 0)),
+                    "volume_24h": float(item.get("quoteAssetVolume", 0)) if item.get("quoteAssetVolume") else None,
+                    "price_change_24h": float(item.get("priceChangePercent", 0)) if item.get("priceChangePercent") else None,
+                    "raw_item": item
+                })
+        
+        # Binance current prices: list of symbol/price pairs
+        elif connector_id == "binance_prices" and isinstance(response_data, list):
+            for item in response_data:
+                items.append({
+                    "coin_name": item.get("symbol", "-"),
+                    "coin_symbol": item.get("symbol", "-"),
+                    "price": float(item.get("price", 0)) if item.get("price") else 0.0,
+                    "raw_item": item
+                })
+        
+        # CoinGecko global: extract from data field
+        elif connector_id == "coingecko_global" and isinstance(response_data, dict):
+            data = response_data.get("data", {})
+            if data:
+                items.append({
+                    "coin_name": "Global Market Data",
+                    "coin_symbol": "GLOBAL",
+                    "price": data.get("btc_market_cap"),
+                    "market_cap": data.get("total_market_cap", {}).get("usd"),
+                    "volume_24h": data.get("total_volume", {}).get("usd"),
+                    "raw_item": data
+                })
+        
+        # CryptoCompare multi format: dict with symbols as keys
+        elif connector_id == "cryptocompare_multi" and isinstance(response_data, dict):
+            for symbol, prices in response_data.items():
+                if isinstance(prices, dict) and "USD" in prices:
+                    items.append({
+                        "coin_name": symbol,
+                        "coin_symbol": symbol,
+                        "price": prices.get("USD"),
+                        "raw_item": {"symbol": symbol, "data": prices}
+                    })
+        
+        # CryptoCompare top format: nested data structure
+        elif connector_id == "cryptocompare_top" and isinstance(response_data, dict):
+            data = response_data.get("Data", [])
+            if isinstance(data, list):
+                for item in data:
+                    coin_info = item.get("CoinInfo", {})
+                    price_info = item.get("DISPLAY", {}).get("USD", {})
+                    items.append({
+                        "coin_name": coin_info.get("FullName", "-"),
+                        "coin_symbol": coin_info.get("Symbol", "-"),
+                        "price": float(price_info.get("PRICE", 0).replace("$", "").replace(",", "")) if price_info.get("PRICE") else None,
+                        "market_cap": price_info.get("MKTCAP"),
+                        "volume_24h": price_info.get("VOLUME24H"),
+                        "price_change_24h": price_info.get("CHANGE24HOUR"),
+                        "raw_item": item
+                    })
+        
+        # Binance order book: extract bids/asks
+        elif connector_id == "binance_orderbook" and isinstance(response_data, dict):
+            bids = response_data.get("bids", [])
+            asks = response_data.get("asks", [])
+            
+            if bids:
+                best_bid = bids[0]
+                items.append({
+                    "coin_name": "BTC/USDT - Best Bid",
+                    "coin_symbol": "BTC",
+                    "price": float(best_bid[0]) if len(best_bid) > 0 else None,
+                    "volume_24h": float(best_bid[1]) if len(best_bid) > 1 else None,
+                    "raw_item": {"type": "best_bid", "data": best_bid}
+                })
+            
+            if asks:
+                best_ask = asks[0]
+                items.append({
+                    "coin_name": "BTC/USDT - Best Ask",
+                    "coin_symbol": "BTC",
+                    "price": float(best_ask[0]) if len(best_ask) > 0 else None,
+                    "volume_24h": float(best_ask[1]) if len(best_ask) > 1 else None,
+                    "raw_item": {"type": "best_ask", "data": best_ask}
+                })
+        
+        # Default: if we have a list, treat each item as a separate entry
+        elif isinstance(response_data, list) and len(response_data) > 0:
+            for item in response_data:
+                if isinstance(item, dict):
+                    items.append({
+                        "coin_name": item.get("name", item.get("symbol", "-")),
+                        "coin_symbol": item.get("symbol", "-").upper(),
+                        "price": item.get("price"),
+                        "raw_item": item
+                    })
+        
+        # If response is a dict and we didn't match above, store it as one item
+        if len(items) == 0 and isinstance(response_data, dict):
+            items.append({
+                "coin_name": connector_id,
+                "coin_symbol": connector_id.upper(),
+                "price": response_data.get("price"),
+                "raw_item": response_data
+            })
+    
+    except Exception as e:
+        logger.warning(f"[DB] Error extracting items for {connector_id}: {e}")
+    
+    return items if items else [{"coin_name": connector_id, "coin_symbol": connector_id, "price": 0.0, "raw_item": response_data}]
+
+
 async def save_to_database(message: dict):
     """Save processed message to database"""
     try:
         pool = get_pool()
         async with pool.acquire() as conn:
             # Extract fields
-            connector_id = message.get("connector_id", "unknown")
-            exchange = message.get("exchange", "custom")
-            instrument = message.get("instrument")
+            connector_id = message.get("connector_id") or "unknown"
+            exchange = message.get("exchange") or "custom"
+            instrument = message.get("instrument") or "-"
             price = message.get("price")
-            data = message.get("data", {})
-            message_type = message.get("message_type", "api_response")
+            if price is None:
+                price = 0.0
+            data = message.get("data")
+            if data is None:
+                data = {}
+            message_type = message.get("message_type") or "api_response"
             timestamp_str = message.get("timestamp")
             raw_response = message.get("raw_response")
+            if raw_response is None:
+                raw_response = {}
             status_code = message.get("status_code")
+            if status_code is None:
+                status_code = 200
             response_time_ms = message.get("response_time_ms")
+            if response_time_ms is None:
+                response_time_ms = 0
+            # Log warning if any required field is missing
+            required_fields = {
+                "connector_id": connector_id,
+                "exchange": exchange,
+                "instrument": instrument,
+                "price": price,
+                "data": data,
+                "message_type": message_type,
+                "timestamp": timestamp_str,
+            }
+            for k, v in required_fields.items():
+                if v in [None, "", {}, []]:
+                    logger.warning(f"[DB] Field '{k}' is missing or empty, using default value: {v}")
             
             # Parse timestamp
             if timestamp_str:
@@ -336,13 +679,16 @@ connector_manager = get_connector_manager(message_processor)
 
 
 # ==================== Job Scheduler Setup ====================
+
 @app.on_event("startup")
 async def startup_job_scheduler():
     """Start job scheduler on application startup."""
     global _job_scheduler
     try:
         loop = asyncio.get_event_loop()
-        _job_scheduler = start_job_scheduler(loop, save_to_database)
+        # Ensure scheduled connectors exist before starting scheduler
+        await ensure_scheduled_connectors()
+        _job_scheduler = start_job_scheduler(loop, save_to_database, save_api_items_to_database)
         logger.info("[STARTUP] Job scheduler initialized and running")
     except Exception as e:
         logger.error(f"[STARTUP] Failed to start job scheduler: {e}")

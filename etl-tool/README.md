@@ -6,13 +6,28 @@ A comprehensive Extract, Transform, Load (ETL) tool designed for real-time data 
 
 ### Core Capabilities
 - **Real-Time Data Streaming**: WebSocket connections to OKX, Binance, and custom endpoints
-- **REST API Integration**: Automated polling of multiple crypto APIs with parallel execution
-- **Job Scheduling**: Scheduled execution of non-realtime APIs every 10 seconds
+- **REST API Integration**: Automated polling of 8 crypto APIs with parallel execution
+- **Dual Data Storage**: 
+  - **Aggregate Data**: Complete API responses stored as JSON blobs
+  - **Granular Data**: Individual items from API responses (100-1000+ rows per call)
+- **Job Scheduling**: Scheduled execution of APIs every 10 seconds
 - **File Processing**: CSV and JSON file upload and processing
-- **PostgreSQL Storage**: Automatic data persistence with optimized indexing
+- **PostgreSQL Storage**: Automatic data persistence with optimized indexing (6 tables, 5+ indexes)
 - **Real-Time Dashboard**: Live charts, metrics, and data visualization
 - **Data Transformation**: Flexible transformation pipelines
 - **Encrypted Credentials**: Secure storage of API keys and authentication tokens
+
+## 📊 Data Volume
+
+With dual storage strategy:
+- **Aggregate Table**: ~8 rows per 10 seconds (1 per API)
+- **Granular Table**: ~3,000+ rows per 10 seconds (100-1000+ per API)
+- **Total**: 3,000+ individual data points queryable every 10 seconds
+
+Data sources include crypto prices, market caps, volumes, trading pairs, and more from:
+- Binance (3 endpoints)
+- CoinGecko (3 endpoints) 
+- CryptoCompare (2 endpoints)
 
 ## 📚 Documentation
 
@@ -49,12 +64,15 @@ Visit http://localhost:5173 (frontend) and http://localhost:8000/docs (API docs)
 ## 🔑 Key Features
 
 - ✅ 8 APIs executing in parallel every 10 seconds
+- ✅ **NEW**: Granular data extraction - 3,000+ individual items per 10 seconds
+- ✅ Dual storage strategy (aggregate + granular)
 - ✅ Real-time WebSocket streaming from Binance/OKX
 - ✅ File upload and processing (CSV, JSON)
 - ✅ Encrypted API key storage
-- ✅ Full PostgreSQL schema with indexing
+- ✅ Full PostgreSQL schema with 6 tables and 5+ indexes
 - ✅ Interactive Swagger API docs
 - ✅ Live dashboard with charts and metrics
+- ✅ 100% queryable granular data (not just JSON blobs)
 
 ## 📞 For Help
 
