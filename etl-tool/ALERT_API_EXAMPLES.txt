@@ -1,0 +1,389 @@
+"""
+Alert System API Examples - Ready to use cURL commands
+"""
+
+# ============================================================================
+# ALERT RULES MANAGEMENT
+# ============================================================================
+
+# 1. CREATE PRICE THRESHOLD ALERT - BTC > $50,000
+curl -X POST http://localhost:8000/api/alerts/rules \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "BTC Price Above 50k",
+    "alert_type": "price_threshold",
+    "enabled": true,
+    "description": "Alert when BTC price exceeds $50,000",
+    "symbol": "BTC",
+    "price_threshold": 50000,
+    "price_comparison": "greater",
+    "notification_channels": "email",
+    "email_recipients": ["admin@example.com", "trader@example.com"],
+    "severity": "critical",
+    "cooldown_minutes": 60,
+    "max_alerts_per_day": 10
+  }'
+
+# 2. CREATE PRICE THRESHOLD ALERT - ETH < $2,000
+curl -X POST http://localhost:8000/api/alerts/rules \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "ETH Price Drop Alert",
+    "alert_type": "price_threshold",
+    "enabled": true,
+    "symbol": "ETH",
+    "price_threshold": 2000,
+    "price_comparison": "less",
+    "notification_channels": "both",
+    "email_recipients": ["risk@example.com"],
+    "slack_webhook_url": "https://hooks.slack.com/services/YOUR/WEBHOOK/URL",
+    "severity": "warning",
+    "cooldown_minutes": 30
+  }'
+
+# 3. CREATE VOLATILITY ALERT - 5% change in 10 minutes
+curl -X POST http://localhost:8000/api/alerts/rules \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "BTC High Volatility Alert",
+    "alert_type": "volatility",
+    "enabled": true,
+    "description": "Alert when BTC changes > 5% in 10 minutes",
+    "symbol": "BTC",
+    "volatility_percentage": 5,
+    "volatility_duration_minutes": 10,
+    "notification_channels": "slack",
+    "slack_webhook_url": "https://hooks.slack.com/services/YOUR/WEBHOOK/URL",
+    "severity": "warning",
+    "cooldown_minutes": 15,
+    "max_alerts_per_day": 20
+  }'
+
+# 4. CREATE VOLATILITY ALERT - 3% change in 5 minutes (aggressive)
+curl -X POST http://localhost:8000/api/alerts/rules \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "ETH Rapid Movement Alert",
+    "alert_type": "volatility",
+    "enabled": true,
+    "symbol": "ETH",
+    "volatility_percentage": 3,
+    "volatility_duration_minutes": 5,
+    "notification_channels": "email",
+    "email_recipients": ["trader@example.com"],
+    "severity": "critical",
+    "cooldown_minutes": 10
+  }'
+
+# 5. CREATE DATA MISSING ALERT - Binance API down for 5 minutes
+curl -X POST http://localhost:8000/api/alerts/rules \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Binance API Down Alert",
+    "alert_type": "data_missing",
+    "enabled": true,
+    "description": "Alert if Binance API has no data for 5+ minutes",
+    "api_endpoint": "binance_prices",
+    "data_missing_minutes": 5,
+    "notification_channels": "email",
+    "email_recipients": ["ops@example.com"],
+    "severity": "critical",
+    "cooldown_minutes": 5
+  }'
+
+# 6. CREATE SYSTEM HEALTH ALERT - Low disk space
+curl -X POST http://localhost:8000/api/alerts/rules \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Low Disk Space Alert",
+    "alert_type": "system_health",
+    "enabled": true,
+    "description": "Alert when disk space < 5 GB",
+    "health_check_type": "disk_space",
+    "threshold_value": 5,
+    "notification_channels": "email",
+    "email_recipients": ["sysadmin@example.com"],
+    "severity": "critical",
+    "cooldown_minutes": 60
+  }'
+
+# 7. CREATE SYSTEM HEALTH ALERT - High memory usage
+curl -X POST http://localhost:8000/api/alerts/rules \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "High Memory Usage Alert",
+    "alert_type": "system_health",
+    "enabled": true,
+    "description": "Alert when memory usage > 85%",
+    "health_check_type": "memory",
+    "threshold_value": 85,
+    "notification_channels": "email",
+    "email_recipients": ["sysadmin@example.com"],
+    "severity": "warning",
+    "cooldown_minutes": 30
+  }'
+
+# 8. CREATE SYSTEM HEALTH ALERT - High CPU usage
+curl -X POST http://localhost:8000/api/alerts/rules \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "High CPU Usage Alert",
+    "alert_type": "system_health",
+    "enabled": true,
+    "health_check_type": "cpu",
+    "threshold_value": 90,
+    "notification_channels": "slack",
+    "slack_webhook_url": "https://hooks.slack.com/services/YOUR/WEBHOOK/URL",
+    "severity": "critical",
+    "cooldown_minutes": 10
+  }'
+
+# 9. CREATE SYSTEM HEALTH ALERT - Database connection failure
+curl -X POST http://localhost:8000/api/alerts/rules \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Database Connection Alert",
+    "alert_type": "system_health",
+    "enabled": true,
+    "health_check_type": "db_connection",
+    "threshold_value": 0,
+    "notification_channels": "both",
+    "email_recipients": ["dba@example.com"],
+    "slack_webhook_url": "https://hooks.slack.com/services/YOUR/WEBHOOK/URL",
+    "severity": "critical",
+    "cooldown_minutes": 5
+  }'
+
+# ============================================================================
+# LIST AND MANAGE ALERT RULES
+# ============================================================================
+
+# 10. GET ALL ALERT RULES
+curl http://localhost:8000/api/alerts/rules
+
+# 11. GET ONLY ENABLED RULES
+curl "http://localhost:8000/api/alerts/rules?enabled_only=true"
+
+# 12. GET SPECIFIC RULE
+curl http://localhost:8000/api/alerts/rules/1
+
+# 13. UPDATE RULE - Change price threshold
+curl -X PUT http://localhost:8000/api/alerts/rules/1 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "price_threshold": 55000
+  }'
+
+# 14. UPDATE RULE - Change notification recipients
+curl -X PUT http://localhost:8000/api/alerts/rules/1 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email_recipients": ["newemail@example.com"]
+  }'
+
+# 15. UPDATE RULE - Disable rule
+curl -X PUT http://localhost:8000/api/alerts/rules/1 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "enabled": false
+  }'
+
+# 16. DELETE RULE
+curl -X DELETE http://localhost:8000/api/alerts/rules/1
+
+# ============================================================================
+# ALERT HISTORY & LOGS
+# ============================================================================
+
+# 17. GET ALL ALERT LOGS
+curl http://localhost:8000/api/alerts/logs
+
+# 18. GET RECENT ALERTS (last 20)
+curl "http://localhost:8000/api/alerts/logs?limit=20"
+
+# 19. GET CRITICAL ALERTS ONLY
+curl "http://localhost:8000/api/alerts/logs?severity=critical"
+
+# 20. GET ALERTS FOR SPECIFIC RULE
+curl "http://localhost:8000/api/alerts/logs?rule_id=1"
+
+# 21. ACKNOWLEDGE AN ALERT
+curl -X POST http://localhost:8000/api/alerts/logs/1/acknowledge
+
+# 22. GET ALERTS FROM TODAY
+curl "http://localhost:8000/api/alerts/logs?limit=1000"
+
+# ============================================================================
+# DASHBOARD & STATISTICS
+# ============================================================================
+
+# 23. GET ALERT DASHBOARD
+curl http://localhost:8000/api/alerts/dashboard
+
+# 24. GET ALERT STATISTICS (last 24 hours)
+curl "http://localhost:8000/api/alerts/stats?hours=24"
+
+# 25. GET WEEKLY STATISTICS
+curl "http://localhost:8000/api/alerts/stats?hours=168"
+
+# 26. GET MONTHLY STATISTICS
+curl "http://localhost:8000/api/alerts/stats?hours=720"
+
+# ============================================================================
+# MANUAL ALERT CHECKING
+# ============================================================================
+
+# 27. MANUALLY TRIGGER ALERT CHECK
+curl -X POST http://localhost:8000/api/alerts/check
+
+# ============================================================================
+# COMPLEX SCENARIOS
+# ============================================================================
+
+# 28. MULTI-ASSET PRICE MONITORING
+# Create separate alerts for multiple cryptocurrencies
+
+# BTC Alert
+curl -X POST http://localhost:8000/api/alerts/rules \
+  -H "Content-Type: application/json" \
+  -d '{"name":"BTC Monitor","alert_type":"price_threshold","symbol":"BTC","price_threshold":50000,"price_comparison":"greater","notification_channels":"email","email_recipients":["admin@example.com"],"severity":"warning","enabled":true}'
+
+# ETH Alert
+curl -X POST http://localhost:8000/api/alerts/rules \
+  -H "Content-Type: application/json" \
+  -d '{"name":"ETH Monitor","alert_type":"price_threshold","symbol":"ETH","price_threshold":3000,"price_comparison":"greater","notification_channels":"email","email_recipients":["admin@example.com"],"severity":"warning","enabled":true}'
+
+# 29. MULTI-CHANNEL NOTIFICATION
+curl -X POST http://localhost:8000/api/alerts/rules \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Critical Alert - All Channels",
+    "alert_type": "system_health",
+    "health_check_type": "db_connection",
+    "threshold_value": 0,
+    "notification_channels": "both",
+    "email_recipients": ["admin@example.com", "ops@example.com"],
+    "slack_webhook_url": "https://hooks.slack.com/services/YOUR/WEBHOOK/URL",
+    "severity": "critical",
+    "cooldown_minutes": 5,
+    "enabled": true
+  }'
+
+# 30. COMPREHENSIVE MONITORING SETUP
+# Create a set of alerts for complete monitoring
+
+# Price Alert
+curl -X POST http://localhost:8000/api/alerts/rules \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Price Alert","alert_type":"price_threshold","symbol":"BTC","price_threshold":50000,"price_comparison":"greater","notification_channels":"email","email_recipients":["admin@example.com"],"severity":"warning","enabled":true}'
+
+# Volatility Alert
+curl -X POST http://localhost:8000/api/alerts/rules \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Volatility Alert","alert_type":"volatility","symbol":"BTC","volatility_percentage":5,"volatility_duration_minutes":10,"notification_channels":"slack","slack_webhook_url":"YOUR_WEBHOOK","severity":"warning","enabled":true}'
+
+# Data Alert
+curl -X POST http://localhost:8000/api/alerts/rules \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Data Alert","alert_type":"data_missing","api_endpoint":"binance_prices","data_missing_minutes":5,"notification_channels":"email","email_recipients":["ops@example.com"],"severity":"critical","enabled":true}'
+
+# System Health Alert
+curl -X POST http://localhost:8000/api/alerts/rules \
+  -H "Content-Type: application/json" \
+  -d '{"name":"System Alert","alert_type":"system_health","health_check_type":"disk_space","threshold_value":5,"notification_channels":"email","email_recipients":["sysadmin@example.com"],"severity":"critical","enabled":true}'
+
+# ============================================================================
+# PYTHON EXAMPLES
+# ============================================================================
+
+"""
+# Python script to create alerts
+import requests
+import json
+
+BASE_URL = "http://localhost:8000/api/alerts"
+
+# Create alert rule
+alert_rule = {
+    "name": "BTC High Alert",
+    "alert_type": "price_threshold",
+    "symbol": "BTC",
+    "price_threshold": 50000,
+    "price_comparison": "greater",
+    "notification_channels": "email",
+    "email_recipients": ["admin@example.com"],
+    "severity": "critical",
+    "enabled": True
+}
+
+response = requests.post(f"{BASE_URL}/rules", json=alert_rule)
+print(response.json())
+
+# Get dashboard
+response = requests.get(f"{BASE_URL}/dashboard")
+print(response.json())
+
+# Get alerts
+response = requests.get(f"{BASE_URL}/logs?limit=10")
+print(response.json())
+
+# Check alerts manually
+response = requests.post(f"{BASE_URL}/check")
+print(response.json())
+"""
+
+# ============================================================================
+# JAVASCRIPT/FRONTEND EXAMPLES
+# ============================================================================
+
+"""
+// JavaScript example to interact with Alert API
+
+const API_URL = 'http://localhost:8000/api/alerts';
+
+// Create alert rule
+async function createAlert(rule) {
+  const response = await fetch(`${API_URL}/rules`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(rule)
+  });
+  return await response.json();
+}
+
+// Get dashboard
+async function getDashboard() {
+  const response = await fetch(`${API_URL}/dashboard`);
+  return await response.json();
+}
+
+// Get alert logs
+async function getAlerts(limit = 100) {
+  const response = await fetch(`${API_URL}/logs?limit=${limit}`);
+  return await response.json();
+}
+
+// Acknowledge alert
+async function acknowledgeAlert(alertId) {
+  const response = await fetch(`${API_URL}/logs/${alertId}/acknowledge`, {
+    method: 'POST'
+  });
+  return await response.json();
+}
+
+// Example usage
+const newAlert = {
+  name: 'BTC Price Alert',
+  alert_type: 'price_threshold',
+  symbol: 'BTC',
+  price_threshold: 50000,
+  price_comparison: 'greater',
+  notification_channels: 'email',
+  email_recipients: ['admin@example.com'],
+  severity: 'warning',
+  enabled: true
+};
+
+createAlert(newAlert).then(result => console.log(result));
+getDashboard().then(data => console.log(data));
+"""

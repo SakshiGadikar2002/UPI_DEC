@@ -317,7 +317,7 @@ GET /api/data/items/symbol/{symbol}
 
 ```json
 {
-    "id": 12345,
+    "id": 1972,
     "connector_id": "binance_24hr",
     "api_name": "Binance - 24hr Ticker",
     "exchange": "binance",

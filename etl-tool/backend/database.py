@@ -184,6 +184,41 @@ async def _initialize_tables():
             CREATE INDEX IF NOT EXISTS idx_websocket_messages_exchange_instrument_timestamp 
             ON websocket_messages(exchange, instrument, timestamp DESC)
         """)
+
+        # Create users table for authentication
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                email VARCHAR(255) UNIQUE NOT NULL,
+                full_name VARCHAR(255),
+                password_hash TEXT NOT NULL,
+                is_active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                last_login_at TIMESTAMP WITH TIME ZONE
+            )
+        """)
+
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)
+        """)
+
+        # Create user activity logs
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_logs (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                action VARCHAR(100) NOT NULL,
+                ip_address VARCHAR(50),
+                user_agent TEXT,
+                metadata JSONB,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+            )
+        """)
+
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_user_logs_user_id_created_at
+            ON user_logs(user_id, created_at DESC)
+        """)
         
         # Create websocket_batches table
         await conn.execute("""
@@ -390,6 +425,180 @@ async def _initialize_tables():
             ON api_connector_items(connector_id, timestamp DESC)
         """)
         
+        # Create alert_rules table
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS alert_rules (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(255) NOT NULL UNIQUE,
+                alert_type VARCHAR(50) NOT NULL,
+                enabled BOOLEAN DEFAULT TRUE,
+                description TEXT,
+                
+                -- Price threshold parameters
+                symbol VARCHAR(50),
+                price_threshold DECIMAL(20, 8),
+                price_comparison VARCHAR(20),
+                
+                -- Volatility parameters
+                volatility_percentage DECIMAL(10, 2),
+                volatility_duration_minutes INTEGER,
+                
+                -- Data missing parameters
+                data_missing_minutes INTEGER,
+                api_endpoint VARCHAR(255),
+                
+                -- System health parameters
+                health_check_type VARCHAR(100),
+                threshold_value DECIMAL(20, 8),
+                
+                -- Notification settings
+                notification_channels VARCHAR(50) DEFAULT 'email',
+                email_recipients TEXT,
+                slack_webhook_url TEXT,
+                
+                -- Alert settings
+                severity VARCHAR(50) DEFAULT 'warning',
+                cooldown_minutes INTEGER DEFAULT 5,
+                max_alerts_per_day INTEGER,
+                
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+            )
+        """)
+        
+        # Create indexes for alert_rules
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_alert_rules_alert_type 
+            ON alert_rules(alert_type)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_alert_rules_enabled 
+            ON alert_rules(enabled)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_alert_rules_symbol 
+            ON alert_rules(symbol)
+        """)
+        
+        # Create alert_logs table (alert history)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS alert_logs (
+                id SERIAL PRIMARY KEY,
+                rule_id INTEGER NOT NULL,
+                alert_type VARCHAR(50) NOT NULL,
+                title VARCHAR(255) NOT NULL,
+                message TEXT NOT NULL,
+                severity VARCHAR(50) DEFAULT 'warning',
+                status VARCHAR(50) DEFAULT 'pending',
+                metadata JSONB,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                sent_at TIMESTAMP WITH TIME ZONE,
+                acknowledged_at TIMESTAMP WITH TIME ZONE,
+                FOREIGN KEY (rule_id) REFERENCES alert_rules(id) ON DELETE CASCADE
+            )
+        """)
+        
+        # Create indexes for alert_logs
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_alert_logs_rule_id 
+            ON alert_logs(rule_id)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_alert_logs_alert_type 
+            ON alert_logs(alert_type)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_alert_logs_severity 
+            ON alert_logs(severity)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_alert_logs_status 
+            ON alert_logs(status)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_alert_logs_created_at 
+            ON alert_logs(created_at DESC)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_alert_logs_rule_created_at 
+            ON alert_logs(rule_id, created_at DESC)
+        """)
+        
+        # Create alert_tracking table (for cooldown and deduplication)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS alert_tracking (
+                id SERIAL PRIMARY KEY,
+                rule_id INTEGER NOT NULL UNIQUE,
+                last_alert_time TIMESTAMP WITH TIME ZONE,
+                alert_count_today INTEGER DEFAULT 0,
+                last_alert_date DATE,
+                FOREIGN KEY (rule_id) REFERENCES alert_rules(id) ON DELETE CASCADE
+            )
+        """)
+        
+        # Create indexes for alert_tracking
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_alert_tracking_rule_id 
+            ON alert_tracking(rule_id)
+        """)
+        
+        # Create notification_queue table (for retry mechanism)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS notification_queue (
+                id SERIAL PRIMARY KEY,
+                alert_id INTEGER NOT NULL,
+                channel VARCHAR(50) NOT NULL,
+                recipient VARCHAR(255),
+                status VARCHAR(50) DEFAULT 'pending',
+                retry_count INTEGER DEFAULT 0,
+                max_retries INTEGER DEFAULT 3,
+                error_message TEXT,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                last_retry_at TIMESTAMP WITH TIME ZONE,
+                sent_at TIMESTAMP WITH TIME ZONE,
+                FOREIGN KEY (alert_id) REFERENCES alert_logs(id) ON DELETE CASCADE
+            )
+        """)
+        
+        # Create indexes for notification_queue
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_notification_queue_alert_id 
+            ON notification_queue(alert_id)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_notification_queue_status 
+            ON notification_queue(status)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_notification_queue_created_at 
+            ON notification_queue(created_at DESC)
+        """)
+        
+        # Create price_history table (for volatility calculation)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS price_history (
+                id SERIAL PRIMARY KEY,
+                symbol VARCHAR(50) NOT NULL,
+                price DECIMAL(20, 8) NOT NULL,
+                source VARCHAR(100),
+                timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+            )
+        """)
+        
+        # Create indexes for price_history
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_price_history_symbol_timestamp 
+            ON price_history(symbol, timestamp DESC)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_price_history_symbol 
+            ON price_history(symbol)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_price_history_timestamp 
+            ON price_history(timestamp DESC)
+        """)
+        
         print("[OK] Initialized PostgreSQL tables with indexes")
 
 
@@ -501,3 +710,66 @@ async def initialize_scheduled_connectors():
                 logger.error(f"Error initializing connector {connector['connector_id']}: {e}")
     
     logger.info("[OK] Initialized 8 scheduled connector records")
+
+
+# -------- User helpers --------
+async def get_user_by_email(email: str):
+    """Fetch a user by email"""
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+
+    async with pool.acquire() as conn:
+        return await conn.fetchrow(
+            "SELECT id, email, full_name, password_hash, is_active, created_at, last_login_at FROM users WHERE email = $1",
+            email.lower()
+        )
+
+
+async def create_user(email: str, password_hash: str, full_name: Optional[str] = None) -> int:
+    """Create a new user and return its id"""
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+
+    async with pool.acquire() as conn:
+        return await conn.fetchval(
+            """
+            INSERT INTO users (email, full_name, password_hash)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (email) DO NOTHING
+            RETURNING id
+            """,
+            email.lower(),
+            full_name,
+            password_hash
+        )
+
+
+async def update_user_last_login(user_id: int):
+    """Set the last_login_at timestamp for a user"""
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE users SET last_login_at = NOW() WHERE id = $1",
+            user_id
+        )
+
+
+async def log_user_event(user_id: int, action: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None, metadata: Optional[dict] = None):
+    """Record a user activity event"""
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO user_logs (user_id, action, ip_address, user_agent, metadata)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            user_id,
+            action,
+            ip_address,
+            user_agent,
+            json.dumps(metadata) if metadata else None
+        )

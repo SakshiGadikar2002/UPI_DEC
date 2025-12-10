@@ -13,4 +13,6 @@ websockets==15.0.1
 aiohttp==3.9.1
 openpyxl==3.1.2
 apscheduler==3.10.4
+psutil==5.9.6
+pytz==2024.1
 
