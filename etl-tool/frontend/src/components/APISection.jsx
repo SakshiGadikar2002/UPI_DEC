@@ -1106,7 +1106,7 @@ function APISection({ data, setData }) {
             >
               <option value="None">None - No authentication required</option>
               <option value="API Key">API Key - Simple API key in headers</option>
-              <option value="HMAC">HMAC - HMAC-SHA256 signature (Binance, OKX)</option>
+              
               <option value="Bearer Token">Bearer Token - OAuth 2.0 Bearer token</option>
               <option value="Basic Auth">Basic Auth - HTTP Basic Authentication</option>
             </select>
