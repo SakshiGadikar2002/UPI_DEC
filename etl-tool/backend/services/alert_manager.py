@@ -101,10 +101,11 @@ class AlertManager:
                     rule_data.get('max_alerts_per_day')
                 )
                 
-                # Initialize alert tracking
+                # Initialize alert tracking (use ON CONFLICT to handle existing rules)
                 await conn.execute("""
                     INSERT INTO alert_tracking (rule_id, last_alert_time, alert_count_today)
                     VALUES ($1, NULL, 0)
+                    ON CONFLICT (rule_id) DO NOTHING
                 """, rule_id)
                 
                 logger.info(f"Created alert rule {rule_id}: {rule_data.get('name')}")
@@ -211,6 +212,22 @@ class AlertManager:
         try:
             rules = await self.get_alert_rules(enabled_only=True)
             
+            # Record prices to price_history for price-based rules
+            for rule in rules:
+                if rule.get('alert_type') in ['price_threshold', 'volatility'] and rule.get('symbol'):
+                    symbol = rule.get('symbol')
+                    try:
+                        current_price = await self.evaluator.checker.get_current_price(symbol)
+                        if current_price:
+                            await self.evaluator.checker.record_price(
+                                symbol=symbol,
+                                price=float(current_price),
+                                source="alert_check"
+                            )
+                            logger.debug(f"Recorded price for {symbol}: {current_price}")
+                    except Exception as e:
+                        logger.debug(f"Could not record price for {symbol}: {e}")
+            
             for rule in rules:
                 try:
                     # Check if we should skip based on cooldown
@@ -247,10 +264,28 @@ class AlertManager:
                             results['alerts'].append({
                                 'alert_id': alert_id,
                                 'rule_id': rule['id'],
-                                'message': message
+                                'rule_name': rule.get('name'),
+                                'message': message,
+                                'severity': rule.get('severity', 'warning'),
+                                'category': rule.get('alert_type'),
+                                'reason': message,
+                                'metadata': metadata
                             })
 
-                            # Send notifications (guarded)
+                            # Ensure rule has email_recipients - get from users table if missing
+                            if not rule.get('email_recipients'):
+                                try:
+                                    async with self.db_pool.acquire() as conn:
+                                        user_emails = await conn.fetch("""
+                                            SELECT email FROM users WHERE is_active = TRUE
+                                        """)
+                                        if user_emails:
+                                            rule['email_recipients'] = [user['email'] for user in user_emails]
+                                            logger.info(f"Using {len(user_emails)} active user emails for alert rule {rule['id']}")
+                                except Exception as e:
+                                    logger.warning(f"Could not fetch user emails: {e}")
+                            
+                            # Send notifications (guarded) - this logs to notification_queue
                             try:
                                 notification_result = await self.notification_service.send_alert(
                                     alert_id,
@@ -260,19 +295,20 @@ class AlertManager:
                                     severity=rule.get('severity', 'warning'),
                                     metadata=metadata
                                 )
+                                logger.info(f"Notification sent for alert {alert_id}: email={notification_result.get('email_sent')}, slack={notification_result.get('slack_sent')}")
                             except Exception as e:
                                 logger.exception(f"Failed to send notification for alert {alert_id}: {e}")
 
                             logger.info(f"Alert triggered: {rule['name']} (ID: {alert_id})")
                 
                 except Exception as e:
-                    logger.error(f"Error checking rule {rule.get('id')}: {e}")
+                    logger.error(f"Error checking rule {rule.get('id')}: {e}", exc_info=True)
                     results['errors'] += 1
             
             logger.info(f"Alert check completed: {results['checked']} checked, {results['triggered']} triggered")
             return results
         except Exception as e:
-            logger.error(f"Error in alert checking: {e}")
+            logger.error(f"Error in alert checking: {e}", exc_info=True)
             results['errors'] += 1
             return results
     
@@ -790,53 +826,74 @@ class AlertManager:
         }
         
         try:
+            # Record prices to price_history from market_data
+            if market_data and market_data.get('price_data'):
+                for symbol, price_info in market_data['price_data'].items():
+                    current_price = price_info.get('current_price')
+                    if current_price:
+                        await self.evaluator.checker.record_price(
+                            symbol=symbol,
+                            price=float(current_price),
+                            source="alert_check"
+                        )
+                        logger.debug(f"Recorded price for {symbol}: {current_price}")
+            
             # Check alerts
             alert_results = await self.check_crypto_alerts(market_data)
             email_results['alerts_triggered'] = alert_results['triggered']
             
-            # Send email for each triggered alert (warning and critical only)
+            # Send email for each triggered alert using notification service (which logs to notification_queue)
             for alert in alert_results['alerts']:
                 if alert['severity'] in ['warning', 'critical']:
                     try:
-                        # Skip INFO level alerts - only send WARNING and CRITICAL
-                        if alert['severity'] not in ['warning', 'critical']:
-                            logger.debug(f"Skipping {alert['severity']} alert: {alert['message']}")
+                        # Get the rule for this alert
+                        rule_id = alert.get('rule_id')
+                        if not rule_id:
+                            logger.warning(f"Alert missing rule_id: {alert}")
                             continue
                         
-                        # Build email subject
-                        severity_icon = {
-                            'warning': '⚠️',
-                            'critical': '🚨'
-                        }.get(alert['severity'], '📨')
+                        # Get rule from database
+                        rules = await self.get_alert_rules(enabled_only=False)
+                        rule = next((r for r in rules if r['id'] == rule_id), None)
                         
-                        subject = f"{severity_icon} [{alert['severity'].upper()}] {alert['message'][:60]}"
+                        if not rule:
+                            logger.warning(f"Rule {rule_id} not found for alert")
+                            # Create a temporary rule with email_recipients from parameter
+                            rule = {
+                                'id': rule_id,
+                                'name': alert.get('title', 'Alert'),
+                                'alert_type': alert.get('category', 'unknown'),
+                                'notification_channels': 'email',
+                                'email_recipients': email_recipients,
+                                'severity': alert.get('severity', 'warning')
+                            }
+                        else:
+                            # Ensure rule has email_recipients - use parameter if rule doesn't have it
+                            if not rule.get('email_recipients'):
+                                rule['email_recipients'] = email_recipients
+                                logger.info(f"Using provided email_recipients for rule {rule_id}")
                         
-                        # Use new professional HTML email format
-                        html_body = self.notification_service.email_notifier.format_alert_email(
-                            alert_message=alert['message'],
-                            alert_category=alert['category'],
-                            alert_reason=alert['reason'],
-                            severity=alert['severity'],
+                        # Use notification service which properly logs to notification_queue
+                        notification_result = await self.notification_service.send_alert(
+                            alert_id=alert.get('alert_id'),
+                            rule=rule,
+                            title=alert.get('title', alert.get('message', 'Alert')),
+                            message=alert.get('message', 'Alert triggered'),
+                            severity=alert.get('severity', 'warning'),
                             metadata=alert.get('metadata', {})
                         )
                         
-                        # Send email (via email notifier)
-                        success, error = self.notification_service.email_notifier.send_email(
-                            recipients=email_recipients,
-                            subject=subject,
-                            body=html_body,
-                            html=True
-                        )
-                        
-                        if success:
+                        if notification_result.get('email_sent'):
                             email_results['emails_sent'] += 1
                             logger.info(f"✓ Email sent for: {alert['message']}")
                         else:
-                            logger.error(f"Failed to send email: {error}")
+                            errors = notification_result.get('errors', [])
+                            if errors:
+                                logger.error(f"Failed to send email: {errors[0]}")
                             email_results['failed'] += 1
                     
                     except Exception as e:
-                        logger.error(f"Failed to send email for alert: {e}")
+                        logger.error(f"Failed to send email for alert: {e}", exc_info=True)
                         email_results['failed'] += 1
             
             return {
@@ -845,7 +902,7 @@ class AlertManager:
             }
         
         except Exception as e:
-            logger.error(f"Error in check_crypto_alerts_and_email: {e}")
+            logger.error(f"Error in check_crypto_alerts_and_email: {e}", exc_info=True)
             return {
                 'checked': 0,
                 'triggered': 0,

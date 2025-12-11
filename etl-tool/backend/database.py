@@ -599,6 +599,15 @@ async def _initialize_tables():
             ON price_history(timestamp DESC)
         """)
         
+        # Initialize alert_tracking for any existing rules that don't have tracking entries
+        await conn.execute("""
+            INSERT INTO alert_tracking (rule_id, last_alert_time, alert_count_today)
+            SELECT id, NULL, 0
+            FROM alert_rules
+            WHERE id NOT IN (SELECT rule_id FROM alert_tracking)
+            ON CONFLICT (rule_id) DO NOTHING
+        """)
+        
         print("[OK] Initialized PostgreSQL tables with indexes")
 
 

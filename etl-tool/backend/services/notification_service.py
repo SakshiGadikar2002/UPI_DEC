@@ -433,6 +433,25 @@ class NotificationService:
                 except:
                     email_recipients = [e.strip() for e in email_recipients.split(',')]
             
+            # If email_recipients is still empty, try to get from active users
+            if not email_recipients:
+                try:
+                    from database import get_pool
+                    pool = get_pool()
+                    async with pool.acquire() as conn:
+                        user_emails = await conn.fetch("""
+                            SELECT email FROM users WHERE is_active = TRUE
+                        """)
+                        if user_emails:
+                            email_recipients = [user['email'] for user in user_emails]
+                            logger.info(f"Using {len(email_recipients)} active user emails for alert {alert_id}")
+                except Exception as e:
+                    logger.warning(f"Could not fetch user emails: {e}")
+            
+            # Ensure email_recipients is a list
+            if not isinstance(email_recipients, list):
+                email_recipients = [email_recipients] if email_recipients else []
+            
             # Send email notification
             if channels in ['email', 'both'] and email_recipients:
                 success, error = self.email_notifier.send_email(

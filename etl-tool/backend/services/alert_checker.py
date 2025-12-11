@@ -339,6 +339,13 @@ class AlertConditionEvaluator:
                 if current_price is None:
                     return False, None, None
                 
+                # Record price to price_history
+                await self.checker.record_price(
+                    symbol=symbol,
+                    price=float(current_price),
+                    source="alert_check"
+                )
+                
                 triggered, message = await self.checker.check_price_threshold(
                     symbol, current_price, threshold, comparison
                 )
@@ -349,6 +356,15 @@ class AlertConditionEvaluator:
                 symbol = rule.get('symbol')
                 volatility_pct = rule.get('volatility_percentage')
                 duration_min = rule.get('volatility_duration_minutes')
+                
+                # Get current price and record it
+                current_price = await self.checker.get_current_price(symbol)
+                if current_price:
+                    await self.checker.record_price(
+                        symbol=symbol,
+                        price=float(current_price),
+                        source="alert_check"
+                    )
                 
                 triggered, message = await self.checker.check_volatility(
                     symbol, volatility_pct, duration_min

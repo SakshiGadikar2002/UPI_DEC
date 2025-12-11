@@ -58,8 +58,17 @@ STATUS: ALL TESTS PASSED ✅
 ### **METHOD 1: Run Test (30 seconds)** ⭐
 
 ```bash
+# Method 1: Using the API (Recommended)
+curl -X POST http://localhost:8000/api/alerts/check \
+  -H "Authorization: Bearer YOUR_TOKEN"
+
+# Method 2: Using Python test script
 cd backend
 python test_crypto_alerts_realtime.py
+
+# Method 3: Check if scheduler is running
+# The alert scheduler automatically checks every 5 minutes
+# Look for logs: "Alert check: X checked, Y triggered, Z emails sent"
 ```
 
 **What you'll see**:

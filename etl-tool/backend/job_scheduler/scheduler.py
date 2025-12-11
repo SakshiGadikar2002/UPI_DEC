@@ -161,24 +161,26 @@ class JobScheduler:
                 
                 # Also save individual items if callback provided
                 if self.save_items_callback:
-                    logger.info(f"[JOB] Calling items callback for {api_id}...")
+                    logger.debug(f"[JOB] Calling items callback for {api_id}...")
                     if isinstance(data, (list, dict)):
                         try:
                             asyncio.run_coroutine_threadsafe(
                                 self.save_items_callback(api_id, api_name, data, response_time_ms),
                                 self.event_loop
                             )
-                            logger.info(f"[JOB] Items callback scheduled for {api_id}")
+                            logger.debug(f"[JOB] Items callback scheduled for {api_id}")
                         except Exception as callback_error:
                             logger.error(f"[JOB] Error scheduling items callback: {callback_error}")
                     else:
-                        logger.warning(f"[JOB] Data is not list/dict for {api_id}, skipping items callback")
+                        logger.debug(f"[JOB] Data is not list/dict for {api_id}, skipping items callback")
                 else:
-                    logger.warning(f"[JOB] save_items_callback is None!")
+                    logger.debug(f"[JOB] save_items_callback is None!")
                 
-                logger.info(f"[JOB] Saved result: {api_name} ({response.status_code}) in {response_time_ms}ms")
+                logger.info(f"[JOB] ✅ {api_name}: Saved to DB (status={response.status_code}, time={response_time_ms}ms)")
+                print(f"[JOB] ✅ {api_name}: Saved to DB (status={response.status_code}, time={response_time_ms}ms)")
             except Exception as e:
-                logger.error(f"[JOB] Failed to schedule save callback: {e}")
+                logger.error(f"[JOB] ❌ Failed to schedule save callback: {e}")
+                print(f"[JOB] ❌ Failed to schedule save callback: {e}")
         
         except requests.exceptions.Timeout:
             logger.error(f"[JOB] TIMEOUT: {api_name} (exceeded 15s)")
@@ -195,7 +197,8 @@ class JobScheduler:
         if not self.is_running:
             return
         
-        logger.info(f"[JOB] Running batch of {len(SCHEDULED_APIS)} APIs in parallel...")
+        logger.info(f"[JOB SCHEDULER] ⚡ Running batch of {len(SCHEDULED_APIS)} APIs in parallel (every {SCHEDULE_INTERVAL_SECONDS}s)...")
+        print(f"[JOB SCHEDULER] ⚡ Running batch of {len(SCHEDULED_APIS)} APIs in parallel (every {SCHEDULE_INTERVAL_SECONDS}s)...")
         
         # Submit all API calls to thread pool (they run concurrently)
         for api_config in SCHEDULED_APIS:
@@ -203,6 +206,7 @@ class JobScheduler:
                 self.executor.submit(self._execute_api_call, api_config)
             except Exception as e:
                 logger.error(f"[JOB] Failed to submit job: {e}")
+                print(f"[JOB] ❌ Failed to submit job: {e}")
         
         # Schedule next batch
         if self.is_running:
@@ -215,10 +219,13 @@ class JobScheduler:
         """Start the job scheduler (runs first batch immediately, then at interval)."""
         if self.is_running:
             logger.warning("[JOB] Scheduler already running")
+            print("[JOB] ⚠️  Scheduler already running")
             return
         
         self.is_running = True
-        logger.info(f"[JOB] Starting scheduler: {len(SCHEDULED_APIS)} APIs every {SCHEDULE_INTERVAL_SECONDS}s")
+        logger.info(f"[JOB SCHEDULER] ✅ STARTED: {len(SCHEDULED_APIS)} APIs every {SCHEDULE_INTERVAL_SECONDS}s")
+        print(f"[JOB SCHEDULER] ✅ STARTED: {len(SCHEDULED_APIS)} APIs every {SCHEDULE_INTERVAL_SECONDS}s")
+        print(f"[JOB SCHEDULER] 📊 APIs configured: {', '.join([api['id'] for api in SCHEDULED_APIS])}")
         
         # Run first batch immediately
         self._run_scheduled_batch()

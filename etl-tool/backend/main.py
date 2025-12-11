@@ -259,9 +259,12 @@ async def lifespan(app: FastAPI):
         try:
             loop = asyncio.get_event_loop()
             start_job_scheduler(loop, save_to_database, save_api_items_to_database)
-            logger.info("[STARTUP] Job scheduler initialized and running")
+            logger.info("[STARTUP] ✅ Job scheduler initialized and running")
+            print("[STARTUP] ✅ Job scheduler initialized and running")
+            print("[STARTUP] 📊 Scheduled APIs will run every 10 seconds")
         except Exception as e:
-            logger.error(f"[STARTUP] Failed to start job scheduler: {e}")
+            logger.error(f"[STARTUP] ❌ Failed to start job scheduler: {e}")
+            print(f"[STARTUP] ❌ Failed to start job scheduler: {e}")
             import traceback
             traceback.print_exc()
     
@@ -838,7 +841,8 @@ async def save_to_database(message: dict):
                 ) VALUES ($1, $2, $3, $4, $5, $6)
             """, timestamp, exchange, instrument, price, json.dumps(data), message_type)
             
-            logger.info(f"[OK] Saved API connector data to database: id={inserted_id}, source_id={source_id}, connector_id={connector_id}")
+            logger.info(f"[DB] ✅ Saved to database: id={inserted_id}, connector_id={connector_id}, exchange={exchange}, timestamp={timestamp}")
+            print(f"[DB] ✅ Saved to database: id={inserted_id}, connector_id={connector_id}, exchange={exchange}")
             
             # Return the saved record
             return {
@@ -888,8 +892,6 @@ async def broadcast_to_websocket(message: dict):
             logger.warning(f"[WARNING] Broadcast without database save: connector_id={message.get('connector_id')}")
     except Exception as e:
         logger.error(f"Error in broadcast_to_websocket: {e}")
-        import traceback
-        traceback.print_exc()
         import traceback
         traceback.print_exc()
 
