@@ -3,8 +3,10 @@ import './Section.css'
 import { checkBackendHealth } from '../utils/backendCheck'
 import { removeDuplicates } from '../utils/duplicateRemover'
 import { getRealtimeWebSocket } from '../utils/realtimeWebSocket'
+import PipelineViewer from './PipelineViewer'
 
 function APISection({ data, setData }) {
+  const apiBase = import.meta.env.VITE_API_BASE || ''
   // Start with an empty URL; user or Quick Connect will provide it.
   // This avoids hardcoding any specific provider (like Binance) in the UI state.
   const [apiUrl, setApiUrl] = useState('')
@@ -32,6 +34,11 @@ function APISection({ data, setData }) {
     transform: { time: 0, status: 'idle' },
     load: { time: 0, status: 'idle' }
   })
+  const [activeApis, setActiveApis] = useState([])
+  const [activeLoading, setActiveLoading] = useState(false)
+  const [activeError, setActiveError] = useState('')
+  const [selectedActiveApi, setSelectedActiveApi] = useState(null)
+  const [showPipelineView, setShowPipelineView] = useState(false)
   const wsRef = useRef(null)
   const dataRef = useRef([])
   const lastUpdateTimeRef = useRef(0) // Track last update time for debouncing
@@ -39,6 +46,8 @@ function APISection({ data, setData }) {
   const lastDataReceivedTimeRef = useRef(null) // Track when data was last received
   const streamHealthCheckRef = useRef(null) // Reference for stream health check interval
   const [authExamplesExpanded, setAuthExamplesExpanded] = useState(false)
+  // Only show pipeline viewer when a connector is running (has connectorId)
+  const shouldShowPipeline = connectorId && connectorStatus === 'running'
 
   // Quick Connect configurations
   const quickConnectOptions = [
@@ -278,6 +287,30 @@ function APISection({ data, setData }) {
       return `${baseUrl}${separator}${paramString}`
     }
   }
+
+  const fetchActiveApis = async () => {
+    try {
+      setActiveLoading(true)
+      setActiveError('')
+      const resp = await fetch(`${apiBase}/api/etl/active`)
+      if (!resp.ok) {
+        throw new Error(`Failed to load active APIs (${resp.status})`)
+      }
+      const data = await resp.json()
+      setActiveApis(Array.isArray(data) ? data : [])
+    } catch (err) {
+      console.error('Failed to fetch active APIs', err)
+      setActiveError(err.message || 'Unable to load active APIs')
+    } finally {
+      setActiveLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchActiveApis()
+    const interval = setInterval(fetchActiveApis, 60000)
+    return () => clearInterval(interval)
+  }, [])
 
   const fetchDataFromDatabase = async (connectorIdToFetch = null) => {
     const idToUse = connectorIdToFetch || connectorId
@@ -990,6 +1023,86 @@ function APISection({ data, setData }) {
       </div>
 
       <div className="section-content">
+        <div className="active-api-panel">
+          <div className="active-api-header">
+            <div>
+              <h3>Scheduled APIs (Job Scheduler)</h3>
+              <p className="active-api-subtitle">8 parallel APIs run every 10 seconds. Status pulled from existing database tables.</p>
+            </div>
+            <div className="active-api-actions">
+              <button
+                className="extract-button-small"
+                onClick={fetchActiveApis}
+                disabled={activeLoading}
+              >
+                {activeLoading ? 'Refreshing...' : 'Refresh'}
+              </button>
+            </div>
+          </div>
+          {activeError && <div className="error-message">{activeError}</div>}
+          <div className="active-api-grid">
+            {activeLoading && activeApis.length === 0 && (
+              <div className="active-api-hint">Loading scheduled APIs…</div>
+            )}
+            {!activeLoading && activeApis.length === 0 && (
+              <div className="active-api-hint">No active APIs detected yet.</div>
+            )}
+            {activeApis.map((api) => {
+              const lastSeen = api.last_timestamp
+                ? new Date(api.last_timestamp).toLocaleString()
+                : 'No data yet'
+              return (
+                <div className="active-api-card" key={api.connector_id}>
+                  <div className="active-api-card-top">
+                    <div>
+                      <div className="active-api-name">{api.name}</div>
+                      <div className="active-api-url">{api.api_url}</div>
+                    </div>
+                    <span className={`status-pill ${api.status === 'ACTIVE' ? 'status-active' : 'status-pending'}`}>
+                      {api.status}
+                    </span>
+                  </div>
+                  <div className="active-api-meta">
+                    <strong>Last data:</strong> {lastSeen}
+                  </div>
+                  <div className="active-api-meta">
+                    <strong>Records:</strong> {api.total_records || 0} • <strong>Items:</strong> {api.total_items || 0}
+                  </div>
+                  <div className="active-api-meta">
+                    <strong>Polling:</strong> {api.polling_interval ? `${api.polling_interval / 1000}s` : 'n/a'}
+                  </div>
+                  <button
+                    className="extract-button-small"
+                    onClick={() => {
+                      setSelectedActiveApi(api.connector_id)
+                      setShowPipelineView(true)
+                    }}
+                  >
+                    View Pipeline
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        {showPipelineView && selectedActiveApi && (
+          <div className="active-pipeline-wrapper">
+            <div className="active-pipeline-header">
+              <div>
+                <div className="active-api-name">Pipeline for {selectedActiveApi}</div>
+              </div>
+              <button
+                className="extract-button-small"
+                onClick={() => setShowPipelineView(false)}
+              >
+                Close
+              </button>
+            </div>
+            <PipelineViewer visible apiId={selectedActiveApi} onClose={() => setShowPipelineView(false)} />
+          </div>
+        )}
+
         {/* Quick Connect Section - Collapsible */}
         {quickConnectExpanded && (
           <div className="quick-connect-section">
@@ -1416,6 +1529,12 @@ function APISection({ data, setData }) {
           </div>
         </div>
       </div>
+
+      {shouldShowPipeline && (
+        <div style={{ marginTop: '16px' }}>
+          <PipelineViewer visible apiId={connectorId || undefined} />
+        </div>
+      )}
     </div>
   )
 }

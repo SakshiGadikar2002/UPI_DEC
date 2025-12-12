@@ -8,6 +8,7 @@ import VisualizationSection from './components/VisualizationSection'
 import DataDisplay from './components/DataDisplay'
 import ErrorBoundary from './components/ErrorBoundary'
 import AuthForm from './components/AuthForm'
+import PipelineViewer from './components/PipelineViewer'
 import './App.css'
 
 function App() {

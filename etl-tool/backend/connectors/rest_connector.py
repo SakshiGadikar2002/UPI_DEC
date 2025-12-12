@@ -10,6 +10,7 @@ from urllib.parse import urlencode, urlparse, parse_qs, urlunparse
 
 from connectors.base_connector import BaseConnector
 from services.auth_handler import AuthHandlerFactory
+from database import start_pipeline_run, log_pipeline_step, complete_pipeline_run
 
 
 logger = logging.getLogger(__name__)

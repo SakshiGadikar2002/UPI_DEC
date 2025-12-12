@@ -6,10 +6,16 @@ Saves results to database automatically on each interval
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable, Dict, List, Any
 import requests
 import time
+
+from database import (
+    complete_pipeline_run,
+    log_pipeline_step,
+    start_pipeline_run,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -112,19 +118,65 @@ class JobScheduler:
         api_name = api_config.get("name", "Unknown API")
         url = api_config.get("url", "")
         method = api_config.get("method", "GET").upper()
+        pipeline_run_id = None
+        pipeline_next_run = datetime.utcnow() + timedelta(seconds=SCHEDULE_INTERVAL_SECONDS)
+        run_error = None
+        run_status = "success"
+
+        def _log_step(step_name: str, status: str, details: Dict[str, Any] = None, error_message: str = None):
+            """Log pipeline step status asynchronously."""
+            nonlocal pipeline_run_id
+            if not pipeline_run_id:
+                return
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    log_pipeline_step(
+                        run_id=pipeline_run_id,
+                        step_name=step_name,
+                        status=status,
+                        details=details,
+                        error_message=error_message,
+                    ),
+                    self.event_loop,
+                )
+            except Exception as log_err:
+                logger.debug(f"[PIPELINE] Failed to log step {step_name} for {api_id}: {log_err}")
         
         try:
+            try:
+                run_info_future = asyncio.run_coroutine_threadsafe(
+                    start_pipeline_run(
+                        api_id=api_id,
+                        api_name=api_name,
+                        source_url=url,
+                        api_type="non-realtime",
+                        schedule_interval_seconds=SCHEDULE_INTERVAL_SECONDS,
+                    ),
+                    self.event_loop,
+                )
+                run_info = run_info_future.result(timeout=3)
+                pipeline_run_id = run_info.get("run_id")
+                pipeline_next_run = run_info.get("next_run_at") or pipeline_next_run
+            except Exception as start_err:
+                logger.warning(f"[PIPELINE] Could not start pipeline run for {api_id}: {start_err}")
+
             logger.info(f"[JOB] Executing: {api_name} -> {url}")
             
-            # Make HTTP request
+            # ETL: Extract
+            _log_step("extract", "running", {"url": url, "method": method})
             response = requests.request(
                 method=method,
                 url=url,
                 timeout=15
             )
             response_time_ms = int((time.time() - start_time) * 1000)
+            _log_step("extract", "success", {"status_code": response.status_code, "response_time_ms": response_time_ms})
             
-            # Parse response
+            # ETL: Clean (lightweight placeholder)
+            _log_step("clean", "running")
+
+            # ETL: Transform (parse/shape)
+            _log_step("transform", "running", {"content_type": response.headers.get("content-type", "")})
             content_type = response.headers.get("content-type", "")
             data = None
             raw_response = response.text
@@ -132,10 +184,24 @@ class JobScheduler:
             if "application/json" in content_type:
                 try:
                     data = response.json()
-                except Exception:
+                except Exception as parse_err:
                     data = {"raw": raw_response}
+                    _log_step("transform", "failure", error_message=str(parse_err))
+                    raise
             else:
                 data = {"raw": raw_response}
+            _log_step(
+                "transform",
+                "success",
+                {
+                    "content_type": content_type,
+                    "parsed_keys": list(data.keys()) if isinstance(data, dict) else None,
+                },
+            )
+            _log_step("clean", "success", {"records": len(data) if isinstance(data, list) else 1})
+
+            # ETL: Load
+            _log_step("load", "running")
             
             # Build message for database
             message = {
@@ -175,18 +241,45 @@ class JobScheduler:
                 else:
                     logger.debug(f"[JOB] save_items_callback is None!")
                 
+                _log_step("load", "success", {"status_code": response.status_code})
                 logger.info(f"[JOB] ✅ {api_name}: Saved to DB (status={response.status_code}, time={response_time_ms}ms)")
                 print(f"[JOB] ✅ {api_name}: Saved to DB (status={response.status_code}, time={response_time_ms}ms)")
             except Exception as e:
                 logger.error(f"[JOB] ❌ Failed to schedule save callback: {e}")
                 print(f"[JOB] ❌ Failed to schedule save callback: {e}")
+                _log_step("load", "failure", error_message=str(e))
+                run_status = "failure"
+                run_error = str(e)
         
         except requests.exceptions.Timeout:
             logger.error(f"[JOB] TIMEOUT: {api_name} (exceeded 15s)")
+            _log_step("extract", "failure", error_message="timeout after 15s")
+            run_status = "failure"
+            run_error = "timeout"
         except requests.exceptions.RequestException as e:
             logger.error(f"[JOB] REQUEST ERROR: {api_name}: {e}")
+            _log_step("extract", "failure", error_message=str(e))
+            run_status = "failure"
+            run_error = str(e)
         except Exception as e:
             logger.error(f"[JOB] UNEXPECTED ERROR: {api_name}: {e}")
+            _log_step("transform", "failure", error_message=str(e))
+            run_status = "failure"
+            run_error = str(e)
+        finally:
+            if pipeline_run_id:
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        complete_pipeline_run(
+                            run_id=pipeline_run_id,
+                            status=run_status,
+                            error_message=run_error,
+                            next_run_at=pipeline_next_run,
+                        ),
+                        self.event_loop,
+                    )
+                except Exception as complete_err:
+                    logger.debug(f"[PIPELINE] Failed to finalize run {pipeline_run_id}: {complete_err}")
     
     def _run_scheduled_batch(self) -> None:
         """

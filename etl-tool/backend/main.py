@@ -6,7 +6,7 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any, Set
 import uvicorn
-from datetime import datetime
+from datetime import datetime, timedelta
 import requests
 import json
 from contextlib import asynccontextmanager
@@ -41,6 +41,8 @@ from database import (
     get_user_by_email,
     update_user_last_login,
     log_user_event,
+    save_uploaded_file_metadata,
+    get_pipeline_state,
 )
 from models.websocket_data import WebSocketMessage, WebSocketBatch
 from models.connector import (
@@ -2065,6 +2067,390 @@ async def get_connector_status(connector_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/pipeline")
+async def list_pipelines():
+    """List distinct pipeline API ids with latest run metadata."""
+    try:
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT DISTINCT ON (api_id)
+                    api_id,
+                    api_name,
+                    api_type,
+                    source_url,
+                    destination,
+                    status,
+                    started_at,
+                    completed_at,
+                    next_run_at,
+                    last_run_at
+                FROM pipeline_runs
+                ORDER BY api_id, started_at DESC
+                """
+            )
+        if rows and len(rows) > 0:
+            return [dict(r) for r in rows]
+
+        # Fallback: expose active connectors even if no pipeline_runs exist yet
+        async with pool.acquire() as conn:
+            fallback_rows = await conn.fetch(
+                """
+                SELECT connector_id AS api_id,
+                       name AS api_name,
+                       'non-realtime' AS api_type,
+                       api_url AS source_url,
+                       'postgres/api_connector_data' AS destination,
+                       status,
+                       NOW() AS started_at,
+                       NULL::timestamp AS completed_at,
+                       NULL::timestamp AS next_run_at,
+                       NULL::timestamp AS last_run_at
+                FROM api_connectors
+                ORDER BY connector_id
+                """
+            )
+        return [dict(r) for r in fallback_rows]
+    except Exception as e:
+        logger.error(f"[PIPELINE] Failed to list pipelines: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/pipeline/{api_id}")
+async def get_pipeline_view(api_id: str):
+    """Return live pipeline state for a scheduled API run plus recent history."""
+    try:
+        pipeline_state = await get_pipeline_state(api_id)
+        active_run = pipeline_state.get("active_run")
+        steps = pipeline_state.get("steps", [])
+        latest_steps = pipeline_state.get("latest_steps", [])
+        history = pipeline_state.get("history", [])
+
+        display_steps = steps if active_run else latest_steps
+        display_run = active_run
+        if not display_run and history:
+            display_run = history[0]
+        if not display_run and not history:
+            # Graceful empty response when no runs exist yet for this API
+            return {
+                "api": {"api_id": api_id},
+                "current_run": None,
+                "history": [],
+                "active": False,
+            }
+
+        total_steps = len(display_steps) or 1
+        completed_steps = len([s for s in display_steps if s.get("status") == "success"])
+        progress_pct = int((completed_steps / total_steps) * 100)
+
+        api_meta = {
+            "api_id": display_run.get("api_id") if display_run else api_id,
+            "api_name": display_run.get("api_name") if display_run else None,
+            "api_type": display_run.get("api_type") if display_run else None,
+            "source_url": display_run.get("source_url") if display_run else None,
+            "destination": display_run.get("destination") if display_run else None,
+            "schedule": {
+                "cron": display_run.get("schedule_cron") if display_run else None,
+                "interval_seconds": display_run.get("schedule_interval_seconds") if display_run else None,
+                "last_run": display_run.get("last_run_at") if display_run else None,
+                "next_run": display_run.get("next_run_at") if display_run else None,
+            },
+        }
+
+        current_run = None
+        if display_run:
+            current_run = {
+                "run_id": display_run.get("id"),
+                "status": display_run.get("status"),
+                "started_at": display_run.get("started_at"),
+                "completed_at": display_run.get("completed_at"),
+                "next_run_at": display_run.get("next_run_at"),
+                "error_message": display_run.get("error_message"),
+                "progress_pct": progress_pct,
+                "steps": display_steps,
+            }
+
+        run_history = []
+        for row in history:
+            duration = None
+            if row.get("started_at") and row.get("completed_at"):
+                duration = (row.get("completed_at") - row.get("started_at")).total_seconds()
+            run_history.append(
+                {
+                    "run_id": row.get("id"),
+                    "status": row.get("status"),
+                    "started_at": row.get("started_at"),
+                    "completed_at": row.get("completed_at"),
+                    "duration_seconds": duration,
+                    "next_run_at": row.get("next_run_at"),
+                    "error_message": row.get("error_message"),
+                }
+            )
+
+        return {
+            "api": api_meta,
+            "current_run": current_run,
+            "history": run_history,
+            "active": bool(active_run),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[PIPELINE] Failed to fetch pipeline for {api_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/etl/active")
+async def list_active_etl_apis(lookback_minutes: int = 90):
+    """
+    List active scheduled APIs with their latest activity derived from existing data tables.
+    Uses api_connectors + api_connector_data/api_connector_items only (no new tables).
+    """
+    try:
+        pool = get_pool()
+        cutoff = datetime.utcnow() - timedelta(minutes=lookback_minutes)
+        async with pool.acquire() as conn:
+            connectors = await conn.fetch(
+                """
+                SELECT connector_id, name, api_url, polling_interval, status, exchange_name
+                FROM api_connectors
+                WHERE status IN ('active', 'running', 'started', 'enabled')
+                ORDER BY connector_id
+                """
+            )
+
+            results = []
+            for row in connectors:
+                row_dict = dict(row)
+                connector_id = row_dict["connector_id"]
+                last_data = await conn.fetchrow(
+                    """
+                    SELECT timestamp, status_code, response_time_ms
+                    FROM api_connector_data
+                    WHERE connector_id = $1
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                    """,
+                    connector_id,
+                )
+                last_item = await conn.fetchrow(
+                    """
+                    SELECT timestamp
+                    FROM api_connector_items
+                    WHERE connector_id = $1
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                    """,
+                    connector_id,
+                )
+                totals = await conn.fetchrow(
+                    """
+                    SELECT 
+                        (SELECT COUNT(*) FROM api_connector_data WHERE connector_id = $1) AS total_data,
+                        (SELECT COUNT(*) FROM api_connector_items WHERE connector_id = $1) AS total_items
+                    """,
+                    connector_id,
+                )
+
+                last_ts_candidates = []
+                if last_data and dict(last_data).get("timestamp"):
+                    last_ts_candidates.append(dict(last_data).get("timestamp"))
+                if last_item and dict(last_item).get("timestamp"):
+                    last_ts_candidates.append(dict(last_item).get("timestamp"))
+                last_ts = max(last_ts_candidates) if last_ts_candidates else None
+
+                # Treat scheduler-managed APIs as ACTIVE as long as connector exists
+                status_label = "ACTIVE"
+
+                totals_dict = dict(totals) if totals else {}
+                last_data_dict = dict(last_data) if last_data else {}
+
+                results.append(
+                    {
+                        "connector_id": connector_id,
+                        "name": row_dict.get("name"),
+                        "api_url": row_dict.get("api_url"),
+                        "exchange_name": row_dict.get("exchange_name"),
+                        "polling_interval": row_dict.get("polling_interval"),
+                        "status": status_label,
+                        "last_timestamp": last_ts,
+                        "last_status_code": last_data_dict.get("status_code") if last_data_dict else None,
+                        "last_response_time_ms": float(last_data_dict.get("response_time_ms"))
+                        if last_data_dict and last_data_dict.get("response_time_ms") is not None
+                        else None,
+                        "total_records": totals_dict.get("total_data", 0),
+                        "total_items": totals_dict.get("total_items", 0),
+                    }
+                )
+
+        return results
+    except Exception as e:
+        logger.error(f"[PIPELINE] Failed to list active ETL APIs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/etl/pipeline/{connector_id}")
+async def get_etl_pipeline_history(connector_id: str, history_limit: int = 15):
+    """
+    Return ETL pipeline view + recent history using existing pipeline tables
+    and activity from api_connector_data/api_connector_items.
+    """
+    try:
+        pipeline_state = await get_pipeline_state(connector_id, history_limit=history_limit)
+        active_run = pipeline_state.get("active_run")
+        steps = pipeline_state.get("steps", [])
+        latest_steps = pipeline_state.get("latest_steps", [])
+        history = pipeline_state.get("history", [])
+
+        display_steps = steps if active_run else latest_steps
+        display_run = active_run or (history[0] if history else None)
+
+        if display_run:
+            total_steps = len(display_steps) or 1
+            completed_steps = len([s for s in display_steps if s.get("status") == "success"])
+            progress_pct = int((completed_steps / total_steps) * 100)
+        else:
+            progress_pct = 0
+
+        api_meta = {
+            "api_id": connector_id,
+            "api_name": display_run.get("api_name") if display_run else None,
+            "api_type": display_run.get("api_type") if display_run else None,
+            "source_url": display_run.get("source_url") if display_run else None,
+            "destination": display_run.get("destination") if display_run else "postgres/api_connector_data",
+            "schedule": {
+                "cron": display_run.get("schedule_cron") if display_run else None,
+                "interval_seconds": display_run.get("schedule_interval_seconds") if display_run else None,
+                "last_run": display_run.get("last_run_at") if display_run else None,
+                "next_run": display_run.get("next_run_at") if display_run else None,
+            },
+        }
+
+        current_run = None
+        if display_run:
+            current_run = {
+                "run_id": display_run.get("id"),
+                "status": display_run.get("status"),
+                "started_at": display_run.get("started_at"),
+                "completed_at": display_run.get("completed_at"),
+                "next_run_at": display_run.get("next_run_at"),
+                "error_message": display_run.get("error_message"),
+                "progress_pct": progress_pct,
+                "steps": display_steps,
+            }
+
+        run_history = []
+        for row in history:
+            duration = None
+            if row.get("started_at") and row.get("completed_at"):
+                duration = (row.get("completed_at") - row.get("started_at")).total_seconds()
+            run_history.append(
+                {
+                    "run_id": row.get("id"),
+                    "status": row.get("status"),
+                    "started_at": row.get("started_at"),
+                    "completed_at": row.get("completed_at"),
+                    "duration_seconds": duration,
+                    "next_run_at": row.get("next_run_at"),
+                    "error_message": row.get("error_message"),
+                }
+            )
+
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            counts = await conn.fetchrow(
+                """
+                SELECT 
+                    COUNT(*) AS total_data,
+                    MAX(timestamp) AS last_data_at
+                FROM api_connector_data
+                WHERE connector_id = $1
+                """,
+                connector_id,
+            )
+            item_counts = await conn.fetchrow(
+                """
+                SELECT 
+                    COUNT(*) AS total_items,
+                    MAX(timestamp) AS last_item_at
+                FROM api_connector_items
+                WHERE connector_id = $1
+                """,
+                connector_id,
+            )
+            activity_rows = await conn.fetch(
+                """
+                SELECT id, timestamp, status_code, response_time_ms, message_type
+                FROM api_connector_data
+                WHERE connector_id = $1
+                ORDER BY timestamp DESC
+                LIMIT 15
+                """,
+                connector_id,
+            )
+            latest_data_rows = await conn.fetch(
+                """
+                SELECT id, timestamp, data, raw_response, status_code, response_time_ms
+                FROM api_connector_data
+                WHERE connector_id = $1
+                ORDER BY timestamp DESC
+                LIMIT 20
+                """,
+                connector_id,
+            )
+
+        def _map_activity(row):
+            row_dict = dict(row)
+            return {
+                "id": row_dict.get("id"),
+                "timestamp": row_dict.get("timestamp"),
+                "status_code": row_dict.get("status_code"),
+                "response_time_ms": float(row_dict.get("response_time_ms"))
+                if row_dict.get("response_time_ms") is not None
+                else None,
+                "message_type": row_dict.get("message_type"),
+            }
+
+        counts_dict = dict(counts) if counts else {}
+        item_counts_dict = dict(item_counts) if item_counts else {}
+
+        data_stats = {
+            "total_records": counts_dict.get("total_data", 0),
+            "last_data_at": counts_dict.get("last_data_at"),
+            "total_items": item_counts_dict.get("total_items", 0),
+            "last_item_at": item_counts_dict.get("last_item_at"),
+        }
+
+        def _map_latest(row):
+            row_dict = dict(row)
+            return {
+                "id": row_dict.get("id"),
+                "timestamp": row_dict.get("timestamp"),
+                "status_code": row_dict.get("status_code"),
+                "response_time_ms": float(row_dict.get("response_time_ms"))
+                if row_dict.get("response_time_ms") is not None
+                else None,
+                "data": row_dict.get("data"),
+                "raw_response": row_dict.get("raw_response"),
+            }
+
+        return {
+            "api": api_meta,
+            "current_run": current_run,
+            "history": run_history,
+            "active": bool(active_run),
+            "data_stats": data_stats,
+            "activity_log": [_map_activity(r) for r in activity_rows] if activity_rows else [],
+            "latest_data": [_map_latest(r) for r in latest_data_rows] if latest_data_rows else [],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[PIPELINE] Failed to build ETL history for {connector_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ==================== Real-Time WebSocket Endpoint ====================
 
 @app.post("/api/realtime/test")
@@ -2238,21 +2624,52 @@ async def websocket_endpoint(websocket: WebSocket):
 async def upload_file(file: UploadFile = File(...)):
     """Upload a file (CSV, JSON, or XLSX) - saved in organized folders by type"""
     try:
-        # Validate file type
-        file_ext = file.filename.split('.')[-1].lower()
-        if file_ext not in ['csv', 'json', 'xlsx', 'xls']:
-            raise HTTPException(status_code=400, detail=f"Unsupported file type: {file_ext}. Supported types: CSV, JSON, XLSX")
+        # Validate file type (fallback to content-type if extension missing)
+        allowed_types = {'csv', 'json', 'xlsx', 'xls'}
+        file_ext = file.filename.split('.')[-1].lower() if '.' in file.filename else ''
+        if file_ext not in allowed_types:
+            # Try content-type mapping when extension is absent or unexpected
+            ct = (file.content_type or "").lower()
+            if 'json' in ct:
+                file_ext = 'json'
+            elif 'csv' in ct:
+                file_ext = 'csv'
+            elif 'spreadsheet' in ct or 'excel' in ct:
+                file_ext = 'xlsx'
+
+        if file_ext not in allowed_types:
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {file_ext or file.content_type}. Supported types: CSV, JSON, XLSX")
         
         # Generate unique file ID
         file_id = str(uuid.uuid4())
         
         # Get appropriate directory based on file type
         uploads_type_dir = get_uploads_dir_by_type(file_ext)
-        file_path = uploads_type_dir / f"{file_id}_{file.filename}"
+        safe_name = file.filename or f"upload.{file_ext}"
+        file_path = uploads_type_dir / f"{file_id}_{safe_name}"
         
         # Save uploaded file
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
+
+        # Persist metadata in database so uploads are traceable
+        try:
+            db_record_id = await save_uploaded_file_metadata(
+                file_id=file_id,
+                filename=safe_name,
+                file_type=file.content_type or file_ext,
+                file_size=file_path.stat().st_size,
+                storage_path=str(file_path),
+                status="uploaded",
+            )
+        except Exception as db_err:
+            logger.error(f"[FILE UPLOAD] Failed to record upload in DB: {db_err}")
+            # Remove the saved file so disk and DB stay consistent
+            try:
+                file_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            raise HTTPException(status_code=500, detail="Could not save upload metadata")
         
         # Determine source type
         source_type = 'xlsx' if file_ext in ['xlsx', 'xls'] else file_ext
@@ -2265,6 +2682,7 @@ async def upload_file(file: UploadFile = File(...)):
             "file_path": str(file_path),
             "source_type": source_type,
             "file_type": file_ext,
+            "record_id": db_record_id,
             "transformations": []  # Default empty transformations
         }
     except Exception as e:

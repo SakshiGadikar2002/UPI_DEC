@@ -5,7 +5,7 @@ import asyncpg
 import psycopg2
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import json
 import logging
@@ -218,6 +218,29 @@ async def _initialize_tables():
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_user_logs_user_id_created_at
             ON user_logs(user_id, created_at DESC)
+        """)
+
+        # Create files table for uploaded file metadata
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS files (
+                id SERIAL PRIMARY KEY,
+                file_id VARCHAR(100) UNIQUE NOT NULL,
+                filename VARCHAR(255) NOT NULL,
+                file_type VARCHAR(100),
+                file_size BIGINT,
+                storage_path TEXT,
+                uploaded_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                status VARCHAR(50) DEFAULT 'uploaded'
+            )
+        """)
+
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_files_uploaded_at
+            ON files(uploaded_at DESC)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_files_status
+            ON files(status)
         """)
         
         # Create websocket_batches table
@@ -598,7 +621,159 @@ async def _initialize_tables():
             CREATE INDEX IF NOT EXISTS idx_price_history_timestamp 
             ON price_history(timestamp DESC)
         """)
-        
+
+        # Pipeline run tracking for scheduled/non-realtime APIs
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS pipeline_runs (
+                id SERIAL PRIMARY KEY,
+                api_id VARCHAR(100) NOT NULL,
+                api_name VARCHAR(255),
+                api_type VARCHAR(50) DEFAULT 'non-realtime',
+                source_url TEXT,
+                destination VARCHAR(255) DEFAULT 'postgres/api_connector_data',
+                schedule_cron VARCHAR(100),
+                schedule_interval_seconds INTEGER,
+                status VARCHAR(20) DEFAULT 'pending',
+                started_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                completed_at TIMESTAMP WITH TIME ZONE,
+                last_run_at TIMESTAMP WITH TIME ZONE,
+                next_run_at TIMESTAMP WITH TIME ZONE,
+                error_message TEXT
+            )
+        """)
+
+        # Backfill missing columns for existing pipeline_runs (handles upgrades)
+        await conn.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name='pipeline_runs' AND column_name='api_id'
+                ) THEN
+                    ALTER TABLE pipeline_runs ADD COLUMN api_id VARCHAR(100) NOT NULL DEFAULT 'unknown';
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name='pipeline_runs' AND column_name='api_name'
+                ) THEN
+                    ALTER TABLE pipeline_runs ADD COLUMN api_name VARCHAR(255);
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name='pipeline_runs' AND column_name='api_type'
+                ) THEN
+                    ALTER TABLE pipeline_runs ADD COLUMN api_type VARCHAR(50) DEFAULT 'non-realtime';
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name='pipeline_runs' AND column_name='source_url'
+                ) THEN
+                    ALTER TABLE pipeline_runs ADD COLUMN source_url TEXT;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name='pipeline_runs' AND column_name='destination'
+                ) THEN
+                    ALTER TABLE pipeline_runs ADD COLUMN destination VARCHAR(255) DEFAULT 'postgres/api_connector_data';
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name='pipeline_runs' AND column_name='schedule_cron'
+                ) THEN
+                    ALTER TABLE pipeline_runs ADD COLUMN schedule_cron VARCHAR(100);
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name='pipeline_runs' AND column_name='schedule_interval_seconds'
+                ) THEN
+                    ALTER TABLE pipeline_runs ADD COLUMN schedule_interval_seconds INTEGER;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name='pipeline_runs' AND column_name='status'
+                ) THEN
+                    ALTER TABLE pipeline_runs ADD COLUMN status VARCHAR(20) DEFAULT 'pending';
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name='pipeline_runs' AND column_name='started_at'
+                ) THEN
+                    ALTER TABLE pipeline_runs ADD COLUMN started_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW();
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name='pipeline_runs' AND column_name='completed_at'
+                ) THEN
+                    ALTER TABLE pipeline_runs ADD COLUMN completed_at TIMESTAMP WITH TIME ZONE;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name='pipeline_runs' AND column_name='last_run_at'
+                ) THEN
+                    ALTER TABLE pipeline_runs ADD COLUMN last_run_at TIMESTAMP WITH TIME ZONE;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name='pipeline_runs' AND column_name='next_run_at'
+                ) THEN
+                    ALTER TABLE pipeline_runs ADD COLUMN next_run_at TIMESTAMP WITH TIME ZONE;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name='pipeline_runs' AND column_name='error_message'
+                ) THEN
+                    ALTER TABLE pipeline_runs ADD COLUMN error_message TEXT;
+                END IF;
+            END $$;
+        """)
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS pipeline_steps (
+                id SERIAL PRIMARY KEY,
+                run_id INTEGER NOT NULL REFERENCES pipeline_runs(id) ON DELETE CASCADE,
+                step_name VARCHAR(50) NOT NULL,
+                status VARCHAR(20) DEFAULT 'pending',
+                started_at TIMESTAMP WITH TIME ZONE,
+                completed_at TIMESTAMP WITH TIME ZONE,
+                details JSONB,
+                error_message TEXT,
+                step_order INTEGER DEFAULT 0
+            )
+        """)
+
+        await conn.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name='pipeline_steps' AND column_name='details'
+                ) THEN
+                    ALTER TABLE pipeline_steps ADD COLUMN details JSONB;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name='pipeline_steps' AND column_name='started_at'
+                ) THEN
+                    ALTER TABLE pipeline_steps ADD COLUMN started_at TIMESTAMP WITH TIME ZONE;
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name='pipeline_steps' AND column_name='completed_at'
+                ) THEN
+                    ALTER TABLE pipeline_steps ADD COLUMN completed_at TIMESTAMP WITH TIME ZONE;
+                END IF;
+            END $$;
+        """)
+
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_pipeline_runs_api_id_status
+            ON pipeline_runs(api_id, status, started_at DESC)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_pipeline_steps_run_id
+            ON pipeline_steps(run_id)
+        """)
+
         # Initialize alert_tracking for any existing rules that don't have tracking entries
         await conn.execute("""
             INSERT INTO alert_tracking (rule_id, last_alert_time, alert_count_today)
@@ -721,6 +896,207 @@ async def initialize_scheduled_connectors():
     logger.info("[OK] Initialized 8 scheduled connector records")
 
 
+# -------- Pipeline tracking helpers --------
+# Order is aligned to a classic ETL pipeline
+PIPELINE_STEP_ORDER = ["extract", "clean", "transform", "load"]
+
+
+async def start_pipeline_run(
+    api_id: str,
+    api_name: str,
+    source_url: str,
+    api_type: str = "non-realtime",
+    schedule_interval_seconds: int = None,
+    schedule_cron: str = None,
+    destination: str = "postgres/api_connector_data",
+):
+    """Create a pipeline run row and seed step placeholders."""
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+
+    started_at = datetime.utcnow()
+    next_run_at = (
+        started_at + timedelta(seconds=schedule_interval_seconds)
+        if schedule_interval_seconds
+        else None
+    )
+
+    async with pool.acquire() as conn:
+        run_id = await conn.fetchval(
+            """
+            INSERT INTO pipeline_runs (
+                api_id, api_name, api_type, source_url, destination,
+                schedule_cron, schedule_interval_seconds, status,
+                started_at, last_run_at, next_run_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 'running', $8, $8, $9)
+            RETURNING id
+            """,
+            api_id,
+            api_name,
+            api_type,
+            source_url,
+            destination,
+            schedule_cron,
+            schedule_interval_seconds,
+            started_at,
+            next_run_at,
+        )
+
+        # Seed step rows so updates can simply change status
+        for idx, step in enumerate(PIPELINE_STEP_ORDER):
+            await conn.execute(
+                """
+                INSERT INTO pipeline_steps (run_id, step_name, status, step_order)
+                VALUES ($1, $2, 'pending', $3)
+                """,
+                run_id,
+                step,
+                idx,
+            )
+
+        return {"run_id": run_id, "started_at": started_at, "next_run_at": next_run_at}
+
+
+async def log_pipeline_step(
+    run_id: int, step_name: str, status: str, details: dict = None, error_message: str = None
+):
+    """Update a single pipeline step status with optional metadata."""
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+
+    if step_name not in PIPELINE_STEP_ORDER:
+        logger.warning(f"[PIPELINE] Unknown step '{step_name}' - skipping log")
+        return
+
+    now = datetime.utcnow()
+    details_json = json.dumps(details) if details else None
+
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE pipeline_steps
+            SET
+                status = $1,
+                details = COALESCE($2, details),
+                error_message = $3,
+                started_at = COALESCE(started_at, CASE WHEN $1 = 'running' THEN $4 ELSE started_at END),
+                completed_at = CASE WHEN $1 IN ('success','failure') THEN $4 ELSE completed_at END
+            WHERE run_id = $5 AND step_name = $6
+            """,
+            status,
+            details_json,
+            error_message,
+            now,
+            run_id,
+            step_name,
+        )
+
+
+async def complete_pipeline_run(
+    run_id: int, status: str, error_message: str = None, next_run_at: datetime = None
+):
+    """Mark pipeline run complete and store timing."""
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+
+    completed_at = datetime.utcnow()
+
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE pipeline_runs
+            SET status = $1,
+                completed_at = $2,
+                error_message = $3,
+                last_run_at = COALESCE(last_run_at, $2),
+                next_run_at = COALESCE($4, next_run_at)
+            WHERE id = $5
+            """,
+            status,
+            completed_at,
+            error_message,
+            next_run_at,
+            run_id,
+        )
+
+
+async def get_pipeline_state(api_id: str, history_limit: int = 10):
+    """Return current pipeline run + history for the given API id."""
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+
+    async with pool.acquire() as conn:
+        active_run = await conn.fetchrow(
+            """
+            SELECT *
+            FROM pipeline_runs
+            WHERE api_id = $1 AND status = 'running'
+            ORDER BY started_at DESC
+            LIMIT 1
+            """,
+            api_id,
+        )
+
+        steps = []
+        if active_run:
+            steps = await conn.fetch(
+                """
+                SELECT step_name, status, started_at, completed_at, details, error_message, step_order
+                FROM pipeline_steps
+                WHERE run_id = $1
+                ORDER BY step_order ASC
+                """,
+                active_run["id"],
+            )
+
+        history_rows = await conn.fetch(
+            """
+            SELECT id, status, started_at, completed_at, error_message, next_run_at, last_run_at
+            FROM pipeline_runs
+            WHERE api_id = $1
+            ORDER BY started_at DESC
+            LIMIT $2
+            """,
+            api_id,
+            history_limit,
+        )
+
+        latest_steps = []
+        if not active_run and history_rows:
+            latest_run_id = history_rows[0]["id"]
+            latest_steps = await conn.fetch(
+                """
+                SELECT step_name, status, started_at, completed_at, details, error_message, step_order
+                FROM pipeline_steps
+                WHERE run_id = $1
+                ORDER BY step_order ASC
+                """,
+                latest_run_id,
+            )
+
+    def _row_to_dict(row):
+        row_dict = dict(row)
+        # Attempt to parse JSON for details if stringified
+        if "details" in row_dict and isinstance(row_dict["details"], str):
+            try:
+                row_dict["details"] = json.loads(row_dict["details"])
+            except Exception:
+                pass
+        return row_dict
+
+    active_data = _row_to_dict(active_run) if active_run else None
+    steps_data = [_row_to_dict(r) for r in steps] if steps else []
+    history = [_row_to_dict(r) for r in history_rows] if history_rows else []
+
+    return {
+        "active_run": active_data,
+        "steps": steps_data,
+        "latest_steps": [_row_to_dict(r) for r in latest_steps] if latest_steps else [],
+        "history": history,
+    }
+
+
 # -------- User helpers --------
 async def get_user_by_email(email: str):
     """Fetch a user by email"""
@@ -781,4 +1157,47 @@ async def log_user_event(user_id: int, action: str, ip_address: Optional[str] = 
             ip_address,
             user_agent,
             json.dumps(metadata) if metadata else None
+        )
+
+
+# -------- File upload helpers --------
+async def save_uploaded_file_metadata(
+    file_id: str,
+    filename: str,
+    file_type: str,
+    file_size: int,
+    storage_path: str,
+    status: str = "uploaded",
+):
+    """Persist uploaded file metadata so uploads are traceable in the database."""
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+
+    async with pool.acquire() as conn:
+        return await conn.fetchval(
+            """
+            INSERT INTO files (file_id, filename, file_type, file_size, storage_path, status)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (file_id) DO NOTHING
+            RETURNING id
+            """,
+            file_id,
+            filename,
+            file_type,
+            file_size,
+            storage_path,
+            status,
+        )
+
+
+async def update_file_status(file_id: str, status: str):
+    """Update the status of an uploaded file (e.g., processing, completed)."""
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE files SET status = $1 WHERE file_id = $2",
+            status,
+            file_id,
         )
