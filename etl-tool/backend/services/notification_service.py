@@ -64,6 +64,9 @@ class EmailNotifier:
         Returns:
             Tuple of (success: bool, error_message: Optional[str])
         """
+        import ssl
+        import time
+        
         try:
             if not self.sender_email:
                 return False, "Email sender address not configured"
@@ -84,29 +87,112 @@ class EmailNotifier:
             mime_type = 'html' if html else 'plain'
             msg.attach(MIMEText(body, mime_type, 'utf-8'))
             
-            # Send email
-            with smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=10) as server:
-                server.ehlo()
-                if self.use_tls:
-                    server.starttls()
+            # Retry logic for connection issues
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    # Create SSL context for better Windows compatibility
+                    context = ssl.create_default_context()
+                    
+                    # Send email with proper SSL handling
+                    server = smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=15)
                     server.ehlo()
+                    
+                    if self.use_tls:
+                        try:
+                            server.starttls(context=context)
+                            server.ehlo()
+                        except Exception as tls_error:
+                            logger.warning(f"TLS error (attempt {attempt + 1}): {tls_error}")
+                            server.quit()
+                            if attempt < max_retries - 1:
+                                time.sleep(1)  # Wait before retry
+                                continue
+                            return False, f"TLS connection failed: {str(tls_error)}"
 
-                auth_supported = server.has_extn("auth")
-                logger.debug(f"SMTP AUTH supported: {auth_supported}, require_auth: {self.require_auth}")
-                
-                if auth_supported and (self.require_auth or self.sender_password):
+                    auth_supported = server.has_extn("auth")
+                    logger.debug(f"SMTP AUTH supported: {auth_supported}, require_auth: {self.require_auth}")
+                    
+                    if auth_supported and (self.require_auth or self.sender_password):
+                        try:
+                            server.login(self.sender_email, self.sender_password)
+                            logger.debug(f"Authenticated with SMTP server")
+                        except smtplib.SMTPAuthenticationError as e:
+                            server.quit()
+                            return False, f"Email authentication failed: {str(e)}"
+                    elif self.require_auth and not auth_supported:
+                        server.quit()
+                        return False, "SMTP AUTH not supported by server; set SMTP_REQUIRE_AUTH=False to send without login"
+
+                    # Send message and verify response using sendmail for better error handling
                     try:
-                        server.login(self.sender_email, self.sender_password)
-                        logger.debug(f"Authenticated with SMTP server")
-                    except smtplib.SMTPAuthenticationError as e:
-                        return False, f"Email authentication failed: {str(e)}"
-                elif self.require_auth and not auth_supported:
-                    return False, "SMTP AUTH not supported by server; set SMTP_REQUIRE_AUTH=False to send without login"
-
-                server.send_message(msg)
-            
-            logger.info(f"Email sent to {recipients}")
-            return True, None
+                        # Use sendmail which gives better error feedback
+                        from_addr = self.sender_email
+                        to_addrs = recipients
+                        
+                        # Set envelope sender and recipients
+                        server.mail(from_addr)
+                        
+                        # Add each recipient and check response
+                        refused_recipients = []
+                        for recipient in to_addrs:
+                            try:
+                                code, resp = server.rcpt(recipient)
+                                if code != 250:
+                                    refused_recipients.append(recipient)
+                                    logger.warning(f"Recipient {recipient} refused: {code} {resp}")
+                            except smtplib.SMTPRecipientRefused as e:
+                                refused_recipients.append(recipient)
+                                logger.warning(f"Recipient {recipient} refused: {e}")
+                        
+                        if refused_recipients:
+                            server.rset()  # Reset the transaction
+                            server.quit()
+                            return False, f"Email delivery refused for: {', '.join(refused_recipients)}"
+                        
+                        # Send the message data
+                        code, resp = server.data(msg.as_string())
+                        if code != 250:
+                            server.rset()
+                            server.quit()
+                            return False, f"SMTP data command failed: {code} {resp}"
+                        
+                        # Verify final response
+                        logger.info(f"Email successfully queued for delivery to {recipients} (SMTP code: {code})")
+                        server.quit()
+                        return True, None
+                        
+                    except smtplib.SMTPRecipientsRefused as e:
+                        server.quit()
+                        return False, f"All recipients refused: {str(e)}"
+                    except smtplib.SMTPDataError as e:
+                        server.quit()
+                        return False, f"SMTP data error: {str(e)}"
+                    except smtplib.SMTPSenderRefused as e:
+                        server.quit()
+                        return False, f"Sender refused: {str(e)}"
+                    except Exception as send_error:
+                        try:
+                            server.rset()
+                            server.quit()
+                        except:
+                            pass
+                        return False, f"Error sending email: {str(send_error)}"
+                    
+                except (smtplib.SMTPException, ssl.SSLError, OSError) as e:
+                    error_msg = str(e)
+                    logger.warning(f"SMTP connection error (attempt {attempt + 1}/{max_retries}): {error_msg}")
+                    try:
+                        server.quit()
+                    except:
+                        pass
+                    
+                    if attempt < max_retries - 1:
+                        time.sleep(2)  # Wait before retry
+                        continue
+                    else:
+                        return False, f"SMTP connection failed after {max_retries} attempts: {error_msg}"
+                        
         except smtplib.SMTPAuthenticationError as e:
             error = f"Email authentication failed: {str(e)}"
             logger.error(error)
@@ -118,6 +204,8 @@ class EmailNotifier:
         except Exception as e:
             error = f"Email send error: {str(e)}"
             logger.error(error)
+            import traceback
+            logger.error(traceback.format_exc())
             return False, error
     
     @staticmethod
