@@ -698,7 +698,7 @@
 
 .extract-button-small {
   padding: 8px 16px;
-  background: #78176b;
+  background: #4b5563;
   color: white;
   border: none;
   border-radius: 6px;
@@ -710,7 +710,7 @@
 }
 
 .extract-button-small:hover:not(:disabled) {
-  background: #5d0f52;
+  background: #374151;
 }
 
 .extract-button-small:disabled {
@@ -1009,6 +1009,19 @@
   margin-top: 0;
 }
 
+.api-config-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 768px) {
+  .api-config-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Scheduled API list */
 .active-api-panel {
   border: 1px solid #e5e7eb;
@@ -1063,20 +1076,45 @@
   padding: 14px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 0;
   box-shadow: 0 1px 3px rgba(0,0,0,0.05);
   transition: box-shadow 0.2s;
+  min-height: 200px;
+  height: 100%;
 }
 
 .active-api-card:hover {
   box-shadow: 0 2px 6px rgba(0,0,0,0.08);
 }
 
+.active-api-card-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+}
+
 .active-api-card-top {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: flex-start;
   gap: 8px;
+}
+
+.active-api-title-section {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex: 1;
+}
+
+.active-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #10b981;
+  flex-shrink: 0;
+  margin-top: 6px;
 }
 
 .active-api-name {
@@ -1105,6 +1143,12 @@
   font-weight: 600;
 }
 
+.active-api-card button {
+  margin-top: auto;
+  align-self: flex-start;
+  width: 100%;
+}
+
 .active-api-hint {
   color: #6b7280;
   font-size: 0.9rem;
@@ -1128,8 +1172,8 @@
 }
 
 .status-pill.status-active {
-  background: #d1fae5;
-  color: #065f46;
+  background: transparent;
+  color: #374151;
   font-weight: 600;
 }
 

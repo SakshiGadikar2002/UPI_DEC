@@ -206,27 +206,31 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
               Close
             </button>
           )}
-          <select
-            value={selectedApi}
-            onChange={(e) => setSelectedApi(e.target.value)}
-            className="pipeline-select"
-            disabled={!!apiId || options.length === 0}
-          >
-            {options.length === 0 && <option value="">No pipelines available</option>}
-            {options.length > 0 && <option value="">Select an API</option>}
-            {options.map((api) => (
-              <option key={api.id} value={api.id}>
-                {api.name}
-              </option>
-            ))}
-          </select>
-          <button
-            className="pipeline-refresh"
-            onClick={() => fetchPipeline(selectedApi)}
-            disabled={!selectedApi}
-          >
-            Refresh
-          </button>
+          {!onClose && (
+            <>
+              <select
+                value={selectedApi}
+                onChange={(e) => setSelectedApi(e.target.value)}
+                className="pipeline-select"
+                disabled={!!apiId || options.length === 0}
+              >
+                {options.length === 0 && <option value="">No pipelines available</option>}
+                {options.length > 0 && <option value="">Select an API</option>}
+                {options.map((api) => (
+                  <option key={api.id} value={api.id}>
+                    {api.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="pipeline-refresh"
+                onClick={() => fetchPipeline(selectedApi)}
+                disabled={!selectedApi}
+              >
+                Refresh
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -255,9 +259,6 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
                 <div className="meta-label">Status</div>
                 <div className={`status-pill status-${pipelineData?.current_run?.status || 'pending'}`}>
                   {pipelineData?.current_run?.status || 'pending'}
-                </div>
-                <div className="meta-hint">
-                  Progress: {pipelineData?.current_run?.progress_pct ?? 0}%
                 </div>
               </div>
               <div>
@@ -364,23 +365,23 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
                 
                 // Extract count from details or data_stats
                 let countDisplay = '—'
-                if (stepInfo?.status === 'success' || stepInfo?.status === 'running') {
-                  if (stepName === 'extract' && dataStats.total_records > 0) {
-                    countDisplay = `${dataStats.total_records} records extracted`
-                  } else if (stepName === 'clean' && dataStats.total_records > 0) {
-                    countDisplay = `${dataStats.total_records} records cleaned`
-                  } else if (stepName === 'transform' && dataStats.total_items > 0) {
-                    countDisplay = `${dataStats.total_items} items transformed`
-                  } else if (stepName === 'load' && dataStats.total_records > 0) {
-                    countDisplay = `${dataStats.total_records} records loaded`
-                  } else if (details) {
-                    try {
-                      const parsed = typeof details === 'string' ? JSON.parse(details) : details
-                      if (parsed.records) countDisplay = `${parsed.records} records`
-                      if (parsed.items) countDisplay = `${parsed.items} items`
-                    } catch (e) {
-                      // Keep default
-                    }
+                // Always try to show count, regardless of status
+                if (stepName === 'extract' && dataStats.total_records > 0) {
+                  countDisplay = `${dataStats.total_records}`
+                } else if (stepName === 'clean' && dataStats.total_records > 0) {
+                  countDisplay = `${dataStats.total_records}`
+                } else if (stepName === 'transform' && dataStats.total_items > 0) {
+                  countDisplay = `${dataStats.total_items}`
+                } else if (stepName === 'load' && dataStats.total_records > 0) {
+                  countDisplay = `${dataStats.total_records}`
+                } else if (details) {
+                  try {
+                    const parsed = typeof details === 'string' ? JSON.parse(details) : details
+                    if (parsed.records) countDisplay = `${parsed.records}`
+                    else if (parsed.items) countDisplay = `${parsed.items}`
+                    else if (parsed.count) countDisplay = `${parsed.count}`
+                  } catch (e) {
+                    // Keep default
                   }
                 }
                 
@@ -388,16 +389,14 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
                   <div className="pipeline-step-row" key={stepName}>
                     <div className="pipeline-step-name">{stepName.toUpperCase()}</div>
                     <div className="pipeline-step-status">
-                      <span className={`status-pill status-${stepInfo?.status || 'pending'}`}>
-                        {stepInfo?.status || 'pending'}
-                      </span>
-                    </div>
-                    <div className="pipeline-step-times">
-                      <div>Start: {started}</div>
-                      <div>End: {finished}</div>
+                      {countDisplay !== '—' ? (
+                        <span className="pipeline-step-count">{countDisplay}</span>
+                      ) : (
+                        <span className="pipeline-step-empty">—</span>
+                      )}
                     </div>
                     <div className="pipeline-step-details">
-                      {countDisplay !== '—' ? countDisplay : (stepInfo?.error_message || details || '—')}
+                      {stepInfo?.error_message || details || '—'}
                     </div>
                   </div>
                 )
@@ -417,16 +416,18 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
                         {row.timestamp ? new Date(row.timestamp).toLocaleString() : 'n/a'}
                       </div>
                     </div>
-                    <div>
-                      <div className="meta-label">Status</div>
-                      <span className="status-pill status-success">
-                        {row.status_code || 'saved'}
-                      </span>
-                    </div>
-                    <div>
-                      <div className="meta-label">Latency</div>
-                      <div className="meta-hint">
-                        {row.response_time_ms ? `${row.response_time_ms} ms` : 'n/a'}
+                    <div className="activity-status-latency">
+                      <div>
+                        <div className="meta-label">Status</div>
+                        <span className="status-pill status-success">
+                          {row.status_code || 'saved'}
+                        </span>
+                      </div>
+                      <div>
+                        <div className="meta-label">Latency</div>
+                        <div className="meta-hint">
+                          {row.response_time_ms ? `${row.response_time_ms} ms` : 'n/a'}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -441,16 +442,18 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
                             {row.timestamp ? new Date(row.timestamp).toLocaleString() : 'n/a'}
                           </div>
                         </div>
-                        <div>
-                          <div className="meta-label">Status</div>
-                          <span className="status-pill status-success">
-                            {row.status_code || 'saved'}
-                          </span>
-                        </div>
-                        <div>
-                          <div className="meta-label">Latency</div>
-                          <div className="meta-hint">
-                            {row.response_time_ms ? `${row.response_time_ms} ms` : 'n/a'}
+                        <div className="activity-status-latency">
+                          <div>
+                            <div className="meta-label">Status</div>
+                            <span className="status-pill status-success">
+                              {row.status_code || 'saved'}
+                            </span>
+                          </div>
+                          <div>
+                            <div className="meta-label">Latency</div>
+                            <div className="meta-hint">
+                              {row.response_time_ms ? `${row.response_time_ms} ms` : 'n/a'}
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -475,7 +478,13 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {pipelineData.latest_data.map((row) => (
+                    {[...pipelineData.latest_data]
+                      .sort((a, b) => {
+                        const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0
+                        const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0
+                        return timeB - timeA // Most recent first
+                      })
+                      .map((row) => (
                       <tr key={row.id}>
                         <td>{row.timestamp ? new Date(row.timestamp).toLocaleString() : 'n/a'}</td>
                         <td>
@@ -492,7 +501,7 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
                           </div>
                         </td>
                       </tr>
-                    ))}
+                      ))}
                   </tbody>
                 </table>
               </div>

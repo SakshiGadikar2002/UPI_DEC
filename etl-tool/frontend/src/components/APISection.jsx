@@ -1053,23 +1053,24 @@ function APISection({ data, setData }) {
                 : 'No data yet'
               return (
                 <div className="active-api-card" key={api.connector_id}>
-                  <div className="active-api-card-top">
-                    <div>
-                      <div className="active-api-name">{api.name}</div>
-                      <div className="active-api-url">{api.api_url}</div>
+                  <div className="active-api-card-content">
+                    <div className="active-api-card-top">
+                      <div className="active-api-title-section">
+                        {api.status === 'ACTIVE' && (
+                          <span className="active-status-dot"></span>
+                        )}
+                        <div>
+                          <div className="active-api-name">{api.name}</div>
+                          <div className="active-api-url">{api.api_url}</div>
+                        </div>
+                      </div>
                     </div>
-                    <span className={`status-pill ${api.status === 'ACTIVE' ? 'status-active' : 'status-pending'}`}>
-                      {api.status}
-                    </span>
-                  </div>
-                  <div className="active-api-meta">
-                    <strong>Last data:</strong> {lastSeen}
-                  </div>
-                  <div className="active-api-meta">
-                    <strong>Records:</strong> {api.total_records || 0} • <strong>Items:</strong> {api.total_items || 0}
-                  </div>
-                  <div className="active-api-meta">
-                    <strong>Polling:</strong> {api.polling_interval ? `${api.polling_interval / 1000}s` : 'n/a'}
+                    <div className="active-api-meta">
+                      <strong>Last data:</strong> {lastSeen}
+                    </div>
+                    <div className="active-api-meta">
+                      <strong>Records:</strong> {api.total_records || 0} • <strong>Items:</strong> {api.total_items || 0}
+                    </div>
                   </div>
                   <button
                     className="extract-button-small"
@@ -1088,17 +1089,6 @@ function APISection({ data, setData }) {
 
         {showPipelineView && selectedActiveApi && (
           <div className="active-pipeline-wrapper">
-            <div className="active-pipeline-header">
-              <div>
-                <div className="active-api-name">Pipeline for {selectedActiveApi}</div>
-              </div>
-              <button
-                className="extract-button-small"
-                onClick={() => setShowPipelineView(false)}
-              >
-                Close
-              </button>
-            </div>
             <PipelineViewer visible apiId={selectedActiveApi} onClose={() => setShowPipelineView(false)} />
           </div>
         )}
@@ -1137,157 +1127,107 @@ function APISection({ data, setData }) {
 
         {/* Manual API Configuration */}
         <div className="manual-api-config">
-          <div className="input-group">
-            <label>API URL</label>
-            <input
-              type="text"
-              value={apiUrl}
-              onChange={(e) => setApiUrl(e.target.value)}
-              placeholder="https://api.example.com/data"
-              className="url-input"
-              disabled={!backendOnline}
-            />
-          </div>
-
-          <div className="input-group">
-            <label>HTTP Method</label>
-            <select
-              value={httpMethod}
-              onChange={(e) => setHttpMethod(e.target.value)}
-              className="url-input"
-              disabled={!backendOnline}
-            >
-              <option value="GET">GET</option>
-              <option value="POST">POST</option>
-              <option value="PUT">PUT</option>
-              <option value="PATCH">PATCH</option>
-              <option value="DELETE">DELETE</option>
-            </select>
-          </div>
-
-          <div className="input-group">
-            <label>Headers (JSON or key:value format)</label>
-            <textarea
-              value={headers}
-              onChange={(e) => setHeaders(e.target.value)}
-              placeholder='{"Authorization": "Bearer token"}\n\nAuthorization: Bearer token'
-              className="headers-textarea"
-              rows={4}
-              disabled={!backendOnline}
-            />
-          </div>
-
-          <div className="input-group">
-            <label>Query Parameters (JSON or key=value format)</label>
-            <textarea
-              value={queryParams}
-              onChange={(e) => setQueryParams(e.target.value)}
-              placeholder='{"limit": 100, "page": 1}\n\nlimit=100&page=1'
-              className="headers-textarea"
-              rows={4}
-              disabled={!backendOnline}
-            />
-          </div>
-
-          <div className="input-group">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-              <label>Authentication</label>
-              {/* COMMENTED OUT - Test Examples button (not needed)
-              <button
-                type="button"
-                onClick={() => setAuthExamplesExpanded(!authExamplesExpanded)}
-                style={{
-                  padding: '4px 8px',
-                  fontSize: '0.75rem',
-                  backgroundColor: '#f0f0f0',
-                  border: '1px solid #ddd',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  color: '#666'
-                }}
+          <div className="api-config-row">
+            <div className="input-group">
+              <label>API URL</label>
+              <input
+                type="text"
+                value={apiUrl}
+                onChange={(e) => setApiUrl(e.target.value)}
+                placeholder="https://api.example.com/data"
+                className="url-input"
+                disabled={!backendOnline}
+              />
+            </div>
+            <div className="input-group">
+              <label>HTTP Method</label>
+              <select
+                value={httpMethod}
+                onChange={(e) => setHttpMethod(e.target.value)}
+                className="url-input"
                 disabled={!backendOnline}
               >
-                {authExamplesExpanded ? '▼ Hide' : '▶ Show'} Test Examples
-              </button>
-              */}
+                <option value="GET">GET</option>
+                <option value="POST">POST</option>
+                <option value="PUT">PUT</option>
+                <option value="PATCH">PATCH</option>
+                <option value="DELETE">DELETE</option>
+              </select>
             </div>
-            <select
-              value={authentication}
-              onChange={(e) => setAuthentication(e.target.value)}
-              className="url-input"
-              disabled={!backendOnline}
-            >
-              <option value="None">None - No authentication required</option>
-              <option value="API Key">API Key - Simple API key in headers</option>
-              
-              <option value="Bearer Token">Bearer Token - OAuth 2.0 Bearer token</option>
-              <option value="Basic Auth">Basic Auth - HTTP Basic Authentication</option>
-            </select>
-            {/* COMMENTED OUT - Test Examples UI section (not needed)
-            {authExamplesExpanded && (
-              <div style={{ 
-                marginTop: '10px', 
-                padding: '12px', 
-                backgroundColor: '#f9f9f9', 
-                borderRadius: '6px',
-                border: '1px solid #e0e0e0'
-              }}>
-                <div style={{ fontSize: '0.9rem', fontWeight: 'bold', marginBottom: '10px', color: '#333' }}>
-                  🧪 Quick Test Examples - Click to load configuration:
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {Object.entries(authTestExamples).map(([authType, example]) => (
-                    <button
-                      key={authType}
-                      type="button"
-                      onClick={() => loadAuthExample(authType)}
-                      disabled={!backendOnline}
-                      style={{
-                        padding: '8px 12px',
-                        textAlign: 'left',
-                        backgroundColor: authentication === authType ? '#e3f2fd' : '#fff',
-                        border: `1px solid ${authentication === authType ? '#2196F3' : '#ddd'}`,
-                        borderRadius: '4px',
-                        cursor: 'pointer',
-                        fontSize: '0.85rem',
-                        transition: 'all 0.2s'
-                      }}
-                      onMouseEnter={(e) => {
-                        if (authentication !== authType) {
-                          e.target.style.backgroundColor = '#f5f5f5'
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (authentication !== authType) {
-                          e.target.style.backgroundColor = '#fff'
-                        }
-                      }}
-                    >
-                      <div style={{ fontWeight: 'bold', color: '#2196F3', marginBottom: '2px' }}>
-                        {authType} {authentication === authType && '✓'}
-                      </div>
-                      <div style={{ color: '#666', fontSize: '0.8rem' }}>
-                        {example.description}
-                      </div>
-                      <div style={{ color: '#999', fontSize: '0.75rem', marginTop: '2px', fontFamily: 'monospace' }}>
-                        {example.url}
-                      </div>
-                    </button>
-                  ))}
-                </div> 
-              </div>
-            )}
-            */}
-            {authentication === 'None' && (
-              <small style={{ color: '#666', fontSize: '0.85rem', marginTop: '5px', display: 'block' }}>
-                {/* 💡 <strong>No Authentication:</strong> Use this for public APIs that don't require authentication.<br/>
-                <strong>Test URLs:</strong><br/>
-                • Binance Public: <code>https://api.binance.com/api/v3/ticker/price</code><br/>
-                • CoinGecko: <code>https://api.coingecko.com/api/v3/global</code><br/>
-                • HTTPBin: <code>https://httpbin.org/get</code> */}
-              </small>
-            )}
           </div>
+
+          <div className="api-config-row">
+            <div className="input-group">
+              <label>Headers (JSON or key:value format)</label>
+              <textarea
+                value={headers}
+                onChange={(e) => setHeaders(e.target.value)}
+                placeholder='{"Authorization": "Bearer token"}\n\nAuthorization: Bearer token'
+                className="headers-textarea"
+                rows={4}
+                disabled={!backendOnline}
+              />
+            </div>
+            <div className="input-group">
+              <label>Query Parameters (JSON or key=value format)</label>
+              <textarea
+                value={queryParams}
+                onChange={(e) => setQueryParams(e.target.value)}
+                placeholder='{"limit": 100, "page": 1}\n\nlimit=100&page=1'
+                className="headers-textarea"
+                rows={4}
+                disabled={!backendOnline}
+              />
+            </div>
+          </div>
+
+          <div className="api-config-row">
+            <div className="input-group">
+              <label>Authentication</label>
+              <select
+                value={authentication}
+                onChange={(e) => setAuthentication(e.target.value)}
+                className="url-input"
+                disabled={!backendOnline}
+              >
+                <option value="None">None - No authentication required</option>
+                <option value="API Key">API Key - Simple API key in headers</option>
+                <option value="Bearer Token">Bearer Token - OAuth 2.0 Bearer token</option>
+                <option value="Basic Auth">Basic Auth - HTTP Basic Authentication</option>
+              </select>
+            </div>
+            <div className="input-group">
+              <label>Ingestion Mode</label>
+              <select
+                value={ingestionMode}
+                onChange={(e) => setIngestionMode(e.target.value)}
+                className="url-input"
+                disabled={!backendOnline}
+              >
+                <option value="Real-Time Streaming (New)">Real-Time Streaming (New)</option>
+                <option value="One-Time Fetch">One-Time Fetch</option>
+              </select>
+            </div>
+          </div>
+
+          {ingestionMode === 'Real-Time Streaming (New)' && (
+            <div className="api-config-row">
+              <div className="input-group">
+                <label>Polling Interval (ms) - REST only</label>
+                <input
+                  type="number"
+                  value={pollingInterval}
+                  onChange={(e) => setPollingInterval(parseInt(e.target.value) || 1000)}
+                  min="100"
+                  max="60000"
+                  step="100"
+                  className="url-input"
+                  disabled={!backendOnline}
+                />
+              </div>
+              <div className="input-group"></div>
+            </div>
+          )}
 
           {authentication === 'API Key' && (
             <div className="input-group">
@@ -1399,36 +1339,6 @@ function APISection({ data, setData }) {
             </>
           )}
 
-          <div className="input-group">
-            <label>Ingestion Mode</label>
-            <select
-              value={ingestionMode}
-              onChange={(e) => setIngestionMode(e.target.value)}
-              className="url-input"
-              disabled={!backendOnline}
-            >
-              <option value="Real-Time Streaming (New)">Real-Time Streaming (New)</option>
-              <option value="One-Time Fetch">One-Time Fetch</option>
-            </select>
-            {ingestionMode === 'Real-Time Streaming (New)' && (
-              <>
-                <p className="ingestion-hint">Streams data continuously to database and UI.</p>
-                <div style={{ marginTop: '10px' }}>
-                  <label>Polling Interval (ms) - REST only</label>
-                  <input
-                    type="number"
-                    value={pollingInterval}
-                    onChange={(e) => setPollingInterval(parseInt(e.target.value) || 1000)}
-                    min="100"
-                    max="60000"
-                    step="100"
-                    className="url-input"
-                    disabled={!backendOnline}
-                  />
-                </div>
-              </>
-            )}
-          </div>
 
           {connectorId && (
             <div className="input-group" style={{ 

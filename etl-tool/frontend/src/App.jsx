@@ -300,6 +300,8 @@ function App() {
               setIsOpen={setSidebarOpen}
               history={history}
               onClearHistory={clearHistory}
+              user={user}
+              onLogout={handleLogout}
             />
             <Sidebar 
               activeSection={activeSection} 
@@ -309,12 +311,6 @@ function App() {
             />
             
             <main className={`App-main ${sidebarOpen ? 'sidebar-open' : ''}`}>
-              <div className="auth-bar">
-                <div>
-                  Signed in as <strong>{user.email}</strong>{user.full_name ? ` (${user.full_name})` : ''}
-                </div>
-                <button className="logout-btn" onClick={handleLogout}>Logout</button>
-              </div>
               <div className="main-content">
                 <div className="section-panel">
                   {renderActiveSection()}

@@ -255,11 +255,22 @@
 
 .pipeline-step-row {
   display: grid;
-  grid-template-columns: 1fr 120px 200px 1fr;
+  grid-template-columns: 1fr 200px 1fr;
   gap: 10px;
   padding: 12px;
   border-bottom: 1px solid #f3f4f6;
   align-items: center;
+}
+
+.pipeline-step-count {
+  font-weight: 600;
+  color: #111827;
+  font-size: 0.9rem;
+}
+
+.pipeline-step-empty {
+  color: #9ca3af;
+  font-size: 0.9rem;
 }
 
 .pipeline-step-row:last-child {
@@ -301,12 +312,19 @@
 
 .activity-log-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 8px;
+  grid-template-columns: 1fr auto;
+  gap: 16px;
   padding: 10px;
   border: 1px solid #f3f4f6;
   border-radius: 8px;
   background: #f9fafb;
+  align-items: start;
+}
+
+.activity-status-latency {
+  display: flex;
+  gap: 16px;
+  align-items: start;
 }
 
 .scrollable-history {
@@ -333,17 +351,22 @@
   border-radius: 10px;
   background: #fff;
   padding: 12px;
+  width: 100%;
+  grid-column: 1 / -1;
 }
 
 .latest-records-table-wrapper {
   margin-top: 8px;
-  overflow-x: auto;
+  overflow: auto;
+  max-height: 400px;
+  width: 100%;
 }
 
 .latest-records-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.85rem;
+  min-width: 800px;
 }
 
 .latest-records-table thead {
