@@ -90,7 +90,14 @@ function VisualizationSection() {
       } catch (err) {
         if (!isMounted) return
         console.error('Error fetching market data:', err)
-        setError(err.message)
+        // Provide user-friendly error messages
+        let errorMessage = err.message
+        if (err.message.includes('429') || err.message.includes('Rate limit') || err.message.includes('Too Many Requests')) {
+          errorMessage = 'Rate limit exceeded. Data will refresh automatically. Please wait a few minutes.'
+        } else if (err.message.includes('timeout') || err.message.includes('Timeout')) {
+          errorMessage = 'Request timeout. Please check your connection and try again.'
+        }
+        setError(errorMessage)
         setIsLoading(false)
       }
     }
@@ -98,8 +105,8 @@ function VisualizationSection() {
     // Fetch immediately
     fetchData()
 
-    // Then fetch every 30 seconds for real-time updates (reduced to avoid rate limiting)
-    intervalRef.current = setInterval(fetchData, 30000)
+    // Then fetch every 5 minutes (300000ms) to avoid rate limiting and reduce flickering
+    intervalRef.current = setInterval(fetchData, 300000)
 
     return () => {
       isMounted = false

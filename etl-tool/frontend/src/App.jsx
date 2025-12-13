@@ -283,7 +283,7 @@ function App() {
         {!user ? (
           <div className="auth-screen">
             <div className="auth-card">
-              <h1 className="auth-title">ETL Tool</h1>
+              <h1 className="auth-title">Wisepipe</h1>
               <p className="auth-subtitle">Log in or create an account to continue</p>
               <AuthForm
                 loading={authLoading}

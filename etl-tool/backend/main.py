@@ -263,7 +263,7 @@ async def lifespan(app: FastAPI):
             start_job_scheduler(loop, save_to_database, save_api_items_to_database)
             logger.info("[STARTUP] ✅ Job scheduler initialized and running")
             print("[STARTUP] ✅ Job scheduler initialized and running")
-            print("[STARTUP] 📊 Scheduled APIs will run every 10 seconds")
+            print("[STARTUP] 📊 Scheduled APIs will run every 30 minutes")
         except Exception as e:
             logger.error(f"[STARTUP] ❌ Failed to start job scheduler: {e}")
             print(f"[STARTUP] ❌ Failed to start job scheduler: {e}")
@@ -312,7 +312,7 @@ async def lifespan(app: FastAPI):
     await close_postgres_connection()
 
 
-app = FastAPI(title="ETL Tool API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Wisepipe API", version="1.0.0", lifespan=lifespan)
 
 # CORS middleware - allow all origins since we're serving from same port
 app.add_middleware(
@@ -471,7 +471,7 @@ async def send_test_alert(request: Request, current_user=Depends(get_current_use
     recipient = current_user["email"]
     subject = "[TEST] Alert delivery check"
     body = (
-        "<p>This is a test alert from the ETL tool.</p>"
+        "<p>This is a test alert from Wisepipe.</p>"
         "<p>If you received this, SMTP credentials are working.</p>"
     )
     success, error = notifier.send_email([recipient], subject, body, html=True)
@@ -961,7 +961,7 @@ async def root():
     index_path = FRONTEND_DIST / "index.html"
     if index_path.exists():
         return FileResponse(str(index_path))
-    return {"message": "ETL Tool API", "version": "1.0.0"}
+    return {"message": "Wisepipe API", "version": "1.0.0"}
 
 
 @app.post("/api/jobs", response_model=JobStatusResponse)
@@ -1090,36 +1090,94 @@ async def get_binance_symbols():
 COINGECKO_API_BASE = "https://api.coingecko.com/api/v3"
 # Rate limiting: track last request time
 _last_coingecko_request = {"time": 0}
-MIN_REQUEST_INTERVAL = 1.0  # Minimum 1 second between requests
+MIN_REQUEST_INTERVAL = 30.0  # Minimum 30 seconds between requests to avoid rate limiting
+# Response cache to reduce API calls
+_coingecko_cache = {
+    "markets": {"data": None, "timestamp": 0},
+    "global": {"data": None, "timestamp": 0}
+}
+CACHE_DURATION = 300  # Cache responses for 5 minutes (300 seconds)
 
 
 @app.get("/api/crypto/global-stats")
 async def get_global_crypto_stats():
     """Proxy endpoint to fetch global cryptocurrency market statistics from CoinGecko"""
     try:
-        # Rate limiting: ensure minimum interval between requests
+        # Check cache first
         current_time = time.time()
+        cache_entry = _coingecko_cache["global"]
+        if cache_entry["data"] and (current_time - cache_entry["timestamp"]) < CACHE_DURATION:
+            logger.info("Returning cached global stats")
+            return JSONResponse(content=cache_entry["data"])
+        
+        # Rate limiting: ensure minimum interval between requests
         time_since_last = current_time - _last_coingecko_request["time"]
         if time_since_last < MIN_REQUEST_INTERVAL:
             await asyncio.sleep(MIN_REQUEST_INTERVAL - time_since_last)
         
         _last_coingecko_request["time"] = time.time()
         
-        response = requests.get(
-            f"{COINGECKO_API_BASE}/global",
-            timeout=15,
-            headers={"Accept": "application/json"}
-        )
-        response.raise_for_status()
-        data = response.json()
-        return JSONResponse(content=data)
-    except requests.exceptions.Timeout:
-        raise HTTPException(status_code=504, detail="CoinGecko API timeout")
+        # Retry logic with exponential backoff for 429 errors
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = requests.get(
+                    f"{COINGECKO_API_BASE}/global",
+                    timeout=15,
+                    headers={"Accept": "application/json"}
+                )
+                
+                # Handle 429 rate limit errors
+                if response.status_code == 429:
+                    if attempt < max_retries - 1:
+                        backoff_delay = min(2 ** attempt * 5, 30)  # 5s, 10s, 20s, max 30s
+                        logger.warning(f"Rate limited (429). Retrying in {backoff_delay}s... (attempt {attempt + 1}/{max_retries})")
+                        await asyncio.sleep(backoff_delay)
+                        continue
+                    else:
+                        # Return cached data if available, otherwise raise error
+                        if cache_entry["data"]:
+                            logger.warning("Rate limited, returning stale cached data")
+                            return JSONResponse(content=cache_entry["data"])
+                        raise HTTPException(
+                            status_code=429,
+                            detail="Rate limit exceeded. Please try again later."
+                        )
+                
+                response.raise_for_status()
+                data = response.json()
+                
+                # Update cache
+                _coingecko_cache["global"] = {"data": data, "timestamp": time.time()}
+                return JSONResponse(content=data)
+                
+            except requests.exceptions.Timeout:
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                raise HTTPException(status_code=504, detail="CoinGecko API timeout")
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 429 and attempt < max_retries - 1:
+                    backoff_delay = min(2 ** attempt * 5, 30)
+                    await asyncio.sleep(backoff_delay)
+                    continue
+                raise
+                
     except requests.exceptions.RequestException as e:
         logger.error(f"Error fetching global stats from CoinGecko: {e}")
+        # Return cached data if available
+        cache_entry = _coingecko_cache["global"]
+        if cache_entry["data"]:
+            logger.warning("Returning stale cached data due to error")
+            return JSONResponse(content=cache_entry["data"])
         raise HTTPException(status_code=502, detail=f"Error fetching global stats: {str(e)}")
     except Exception as e:
         logger.error(f"Unexpected error in global stats: {e}")
+        # Return cached data if available
+        cache_entry = _coingecko_cache["global"]
+        if cache_entry["data"]:
+            logger.warning("Returning stale cached data due to unexpected error")
+            return JSONResponse(content=cache_entry["data"])
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 
@@ -1135,8 +1193,15 @@ async def get_crypto_markets(
 ):
     """Proxy endpoint to fetch cryptocurrency market data from CoinGecko"""
     try:
-        # Rate limiting: ensure minimum interval between requests
+        # Check cache first (use a cache key based on parameters)
         current_time = time.time()
+        cache_key = f"{ids}_{vs_currency}_{order}_{per_page}_{page}_{sparkline}_{price_change_percentage or ''}"
+        cache_entry = _coingecko_cache["markets"]
+        if cache_entry["data"] and (current_time - cache_entry["timestamp"]) < CACHE_DURATION:
+            logger.info("Returning cached market data")
+            return JSONResponse(content=cache_entry["data"])
+        
+        # Rate limiting: ensure minimum interval between requests
         time_since_last = current_time - _last_coingecko_request["time"]
         if time_since_last < MIN_REQUEST_INTERVAL:
             await asyncio.sleep(MIN_REQUEST_INTERVAL - time_since_last)
@@ -1155,22 +1220,68 @@ async def get_crypto_markets(
         if price_change_percentage:
             params["price_change_percentage"] = price_change_percentage
         
-        response = requests.get(
-            f"{COINGECKO_API_BASE}/coins/markets",
-            params=params,
-            timeout=15,
-            headers={"Accept": "application/json"}
-        )
-        response.raise_for_status()
-        data = response.json()
-        return JSONResponse(content=data)
-    except requests.exceptions.Timeout:
-        raise HTTPException(status_code=504, detail="CoinGecko API timeout")
+        # Retry logic with exponential backoff for 429 errors
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = requests.get(
+                    f"{COINGECKO_API_BASE}/coins/markets",
+                    params=params,
+                    timeout=15,
+                    headers={"Accept": "application/json"}
+                )
+                
+                # Handle 429 rate limit errors
+                if response.status_code == 429:
+                    if attempt < max_retries - 1:
+                        backoff_delay = min(2 ** attempt * 5, 30)  # 5s, 10s, 20s, max 30s
+                        logger.warning(f"Rate limited (429). Retrying in {backoff_delay}s... (attempt {attempt + 1}/{max_retries})")
+                        await asyncio.sleep(backoff_delay)
+                        continue
+                    else:
+                        # Return cached data if available, otherwise raise error
+                        if cache_entry["data"]:
+                            logger.warning("Rate limited, returning stale cached data")
+                            return JSONResponse(content=cache_entry["data"])
+                        raise HTTPException(
+                            status_code=429,
+                            detail="Rate limit exceeded. Please try again later."
+                        )
+                
+                response.raise_for_status()
+                data = response.json()
+                
+                # Update cache
+                _coingecko_cache["markets"] = {"data": data, "timestamp": time.time()}
+                return JSONResponse(content=data)
+                
+            except requests.exceptions.Timeout:
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                raise HTTPException(status_code=504, detail="CoinGecko API timeout")
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 429 and attempt < max_retries - 1:
+                    backoff_delay = min(2 ** attempt * 5, 30)
+                    await asyncio.sleep(backoff_delay)
+                    continue
+                raise
+                
     except requests.exceptions.RequestException as e:
         logger.error(f"Error fetching markets from CoinGecko: {e}")
+        # Return cached data if available
+        cache_entry = _coingecko_cache["markets"]
+        if cache_entry["data"]:
+            logger.warning("Returning stale cached data due to error")
+            return JSONResponse(content=cache_entry["data"])
         raise HTTPException(status_code=502, detail=f"Error fetching markets: {str(e)}")
     except Exception as e:
         logger.error(f"Unexpected error in markets: {e}")
+        # Return cached data if available
+        cache_entry = _coingecko_cache["markets"]
+        if cache_entry["data"]:
+            logger.warning("Returning stale cached data due to unexpected error")
+            return JSONResponse(content=cache_entry["data"])
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 
@@ -2185,6 +2296,7 @@ async def get_pipeline_view(api_id: str):
                     "duration_seconds": duration,
                     "next_run_at": row.get("next_run_at"),
                     "error_message": row.get("error_message"),
+                    "steps": row.get("steps", []),  # Include steps for each history run
                 }
             )
 
@@ -2354,6 +2466,7 @@ async def get_etl_pipeline_history(connector_id: str, history_limit: int = 15):
                     "duration_seconds": duration,
                     "next_run_at": row.get("next_run_at"),
                     "error_message": row.get("error_message"),
+                    "steps": row.get("steps", []),  # Include steps for each history run
                 }
             )
 
@@ -2949,9 +3062,9 @@ if __name__ == "__main__":
             recipients_str = _os.getenv("ALERT_EMAIL_RECIPIENTS", "aishwarya.sakharkar@arithwise.com")
             recipients = [r.strip() for r in recipients_str.split(",") if r.strip()]
             notifier = EmailNotifier()
-            subject = "ETL Tool - Test Alert Email"
+            subject = "Wisepipe - Test Alert Email"
             body = notifier.format_alert_email(
-                alert_message="Test: This is a test alert email from the ETL Tool",
+                alert_message="Test: This is a test alert email from Wisepipe",
                 alert_category="etl_system_alerts",
                 alert_reason="Connectivity and SMTP verification",
                 severity="warning",

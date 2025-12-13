@@ -39,6 +39,9 @@ function APISection({ data, setData }) {
   const [activeError, setActiveError] = useState('')
   const [selectedActiveApi, setSelectedActiveApi] = useState(null)
   const [showPipelineView, setShowPipelineView] = useState(false)
+  const [pipelineViewExpanded, setPipelineViewExpanded] = useState(false)
+  const [formExpanded, setFormExpanded] = useState(true)
+  const [scheduledApisExpanded, setScheduledApisExpanded] = useState(true)
   const wsRef = useRef(null)
   const dataRef = useRef([])
   const lastUpdateTimeRef = useRef(0) // Track last update time for debouncing
@@ -46,8 +49,6 @@ function APISection({ data, setData }) {
   const lastDataReceivedTimeRef = useRef(null) // Track when data was last received
   const streamHealthCheckRef = useRef(null) // Reference for stream health check interval
   const [authExamplesExpanded, setAuthExamplesExpanded] = useState(false)
-  // Only show pipeline viewer when a connector is running (has connectorId)
-  const shouldShowPipeline = connectorId && connectorStatus === 'running'
 
   // Quick Connect configurations
   const quickConnectOptions = [
@@ -133,12 +134,12 @@ function APISection({ data, setData }) {
       fetchDataFromDatabase(connectorId)
       lastDataReceivedTimeRef.current = Date.now() // Initialize last data time
       
-      // Then refresh every 10 seconds to get latest data from api_connector_data table
+      // Then refresh every 30 minutes to get latest data from api_connector_data table
       // Increased interval significantly to reduce flickering
       const interval = setInterval(() => {
         console.log('🔄 Auto-refreshing from api_connector_data table...')
         fetchDataFromDatabase(connectorId)
-      }, 10000) // Refresh every 10 seconds to minimize flickering
+      }, 1800000) // Refresh every 30 minutes (1800 seconds) to minimize flickering
       
       // Stream health check - detect if stream is stuck (no data for 2 minutes)
       streamHealthCheckRef.current = setInterval(() => {
@@ -1027,9 +1028,9 @@ function APISection({ data, setData }) {
           <div className="active-api-header">
             <div>
               <h3>Scheduled APIs (Job Scheduler)</h3>
-              <p className="active-api-subtitle">8 parallel APIs run every 10 seconds. Status pulled from existing database tables.</p>
+              <p className="active-api-subtitle">8 parallel APIs run every 30 minutes. Status pulled from existing database tables.</p>
             </div>
-            <div className="active-api-actions">
+            <div className="active-api-actions" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
               <button
                 className="extract-button-small"
                 onClick={fetchActiveApis}
@@ -1037,10 +1038,21 @@ function APISection({ data, setData }) {
               >
                 {activeLoading ? 'Refreshing...' : 'Refresh'}
               </button>
+              <button 
+                className="collapse-toggle"
+                onClick={() => setScheduledApisExpanded(!scheduledApisExpanded)}
+                aria-label={scheduledApisExpanded ? 'Collapse Scheduled APIs' : 'Expand Scheduled APIs'}
+                title={scheduledApisExpanded ? 'Collapse Scheduled APIs' : 'Expand Scheduled APIs'}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px 8px' }}
+              >
+                <span className={`collapse-icon ${scheduledApisExpanded ? 'expanded' : ''}`}>▼</span>
+              </button>
             </div>
           </div>
-          {activeError && <div className="error-message">{activeError}</div>}
-          <div className="active-api-grid">
+          {scheduledApisExpanded && (
+            <>
+              {activeError && <div className="error-message">{activeError}</div>}
+              <div className="active-api-grid">
             {activeLoading && activeApis.length === 0 && (
               <div className="active-api-hint">Loading scheduled APIs…</div>
             )}
@@ -1077,6 +1089,7 @@ function APISection({ data, setData }) {
                     onClick={() => {
                       setSelectedActiveApi(api.connector_id)
                       setShowPipelineView(true)
+                      setPipelineViewExpanded(true)
                     }}
                   >
                     View Pipeline
@@ -1084,12 +1097,36 @@ function APISection({ data, setData }) {
                 </div>
               )
             })}
-          </div>
+              </div>
+            </>
+          )}
         </div>
 
         {showPipelineView && selectedActiveApi && (
-          <div className="active-pipeline-wrapper">
-            <PipelineViewer visible apiId={selectedActiveApi} onClose={() => setShowPipelineView(false)} />
+          <div className="collapsible-section">
+            <div className="collapsible-header" onClick={() => setPipelineViewExpanded(!pipelineViewExpanded)}>
+              <h3>View Pipeline</h3>
+              <button 
+                className="collapse-toggle"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setPipelineViewExpanded(!pipelineViewExpanded)
+                }}
+                aria-label={pipelineViewExpanded ? 'Collapse Pipeline View' : 'Expand Pipeline View'}
+              >
+                <span className={`collapse-icon ${pipelineViewExpanded ? 'expanded' : ''}`}>▼</span>
+              </button>
+            </div>
+            {pipelineViewExpanded && (
+              <div className="collapsible-content">
+                <div className="active-pipeline-wrapper">
+                  <PipelineViewer visible apiId={selectedActiveApi} onClose={() => {
+                    setShowPipelineView(false)
+                    setPipelineViewExpanded(false)
+                  }} />
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1126,7 +1163,23 @@ function APISection({ data, setData }) {
         )}
 
         {/* Manual API Configuration */}
-        <div className="manual-api-config">
+        <div className="collapsible-section">
+          <div className="collapsible-header" onClick={() => setFormExpanded(!formExpanded)}>
+            <h3>API Configuration Form</h3>
+            <button 
+              className="collapse-toggle"
+              onClick={(e) => {
+                e.stopPropagation()
+                setFormExpanded(!formExpanded)
+              }}
+              aria-label={formExpanded ? 'Collapse Form' : 'Expand Form'}
+            >
+              <span className={`collapse-icon ${formExpanded ? 'expanded' : ''}`}>▼</span>
+            </button>
+          </div>
+          {formExpanded && (
+            <div className="collapsible-content">
+              <div className="manual-api-config">
           <div className="api-config-row">
             <div className="input-group">
               <label>API URL</label>
@@ -1437,14 +1490,11 @@ function APISection({ data, setData }) {
             )}
             {error && <div className="error-message" style={{ marginTop: '15px' }}>{error}</div>}
           </div>
+            </div>
+          </div>
+          )}
         </div>
       </div>
-
-      {shouldShowPipeline && (
-        <div style={{ marginTop: '16px' }}>
-          <PipelineViewer visible apiId={connectorId || undefined} />
-        </div>
-      )}
     </div>
   )
 }

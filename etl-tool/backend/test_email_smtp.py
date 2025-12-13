@@ -35,8 +35,8 @@ def test_email():
     test_body_html = """
     <html>
         <body>
-            <h2>ETL Tool - Alert Test</h2>
-            <p>This is a test email from the ETL tool to verify SMTP functionality.</p>
+            <h2>Wisepipe - Alert Test</h2>
+            <p>This is a test email from Wisepipe to verify SMTP functionality.</p>
             <p><strong>If you received this message, the email alert system is working correctly!</strong></p>
             <p style="color: #666; font-size: 12px;">Sent at: 2025-12-10 09:55:00</p>
         </body>

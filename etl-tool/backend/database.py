@@ -1022,58 +1022,9 @@ async def complete_pipeline_run(
 
 
 async def get_pipeline_state(api_id: str, history_limit: int = 10):
-    """Return current pipeline run + history for the given API id."""
+    """Return current pipeline run + history for the given API id with all steps."""
     if pool is None:
         raise RuntimeError("Database pool not initialized")
-
-    async with pool.acquire() as conn:
-        active_run = await conn.fetchrow(
-            """
-            SELECT *
-            FROM pipeline_runs
-            WHERE api_id = $1 AND status = 'running'
-            ORDER BY started_at DESC
-            LIMIT 1
-            """,
-            api_id,
-        )
-
-        steps = []
-        if active_run:
-            steps = await conn.fetch(
-                """
-                SELECT step_name, status, started_at, completed_at, details, error_message, step_order
-                FROM pipeline_steps
-                WHERE run_id = $1
-                ORDER BY step_order ASC
-                """,
-                active_run["id"],
-            )
-
-        history_rows = await conn.fetch(
-            """
-            SELECT id, status, started_at, completed_at, error_message, next_run_at, last_run_at
-            FROM pipeline_runs
-            WHERE api_id = $1
-            ORDER BY started_at DESC
-            LIMIT $2
-            """,
-            api_id,
-            history_limit,
-        )
-
-        latest_steps = []
-        if not active_run and history_rows:
-            latest_run_id = history_rows[0]["id"]
-            latest_steps = await conn.fetch(
-                """
-                SELECT step_name, status, started_at, completed_at, details, error_message, step_order
-                FROM pipeline_steps
-                WHERE run_id = $1
-                ORDER BY step_order ASC
-                """,
-                latest_run_id,
-            )
 
     def _row_to_dict(row):
         row_dict = dict(row)
@@ -1085,15 +1036,83 @@ async def get_pipeline_state(api_id: str, history_limit: int = 10):
                 pass
         return row_dict
 
-    active_data = _row_to_dict(active_run) if active_run else None
-    steps_data = [_row_to_dict(r) for r in steps] if steps else []
-    history = [_row_to_dict(r) for r in history_rows] if history_rows else []
+    async with pool.acquire() as conn:
+        # Fetch active run (if any)
+        active_run = await conn.fetchrow(
+            """
+            SELECT *
+            FROM pipeline_runs
+            WHERE api_id = $1 AND status = 'running'
+            ORDER BY started_at DESC
+            LIMIT 1
+            """,
+            api_id,
+        )
+
+        # Fetch all history runs with complete metadata
+        history_rows = await conn.fetch(
+            """
+            SELECT *
+            FROM pipeline_runs
+            WHERE api_id = $1
+            ORDER BY started_at DESC
+            LIMIT $2
+            """,
+            api_id,
+            history_limit,
+        )
+
+        # Collect all run IDs (active + history)
+        all_run_ids = []
+        if active_run:
+            all_run_ids.append(active_run["id"])
+        for row in history_rows:
+            if row["id"] not in all_run_ids:
+                all_run_ids.append(row["id"])
+
+        # Fetch steps for ALL runs in a single query
+        all_steps = []
+        if all_run_ids:
+            all_steps = await conn.fetch(
+                """
+                SELECT run_id, step_name, status, started_at, completed_at, details, error_message, step_order
+                FROM pipeline_steps
+                WHERE run_id = ANY($1)
+                ORDER BY run_id DESC, step_order ASC
+                """,
+                all_run_ids,
+            )
+
+        # Organize steps by run_id
+        steps_by_run = {}
+        for step in all_steps:
+            run_id = step["run_id"]
+            if run_id not in steps_by_run:
+                steps_by_run[run_id] = []
+            steps_by_run[run_id].append(_row_to_dict(step))
+
+        # Process active run
+        active_data = _row_to_dict(active_run) if active_run else None
+        active_steps = steps_by_run.get(active_run["id"], []) if active_run else []
+
+        # Process history runs with their steps
+        history_with_steps = []
+        for row in history_rows:
+            run_dict = _row_to_dict(row)
+            run_id = row["id"]
+            run_dict["steps"] = steps_by_run.get(run_id, [])
+            history_with_steps.append(run_dict)
+
+        # For backward compatibility, also provide latest_steps
+        latest_steps = []
+        if not active_run and history_with_steps:
+            latest_steps = history_with_steps[0].get("steps", [])
 
     return {
         "active_run": active_data,
-        "steps": steps_data,
-        "latest_steps": [_row_to_dict(r) for r in latest_steps] if latest_steps else [],
-        "history": history,
+        "steps": active_steps,
+        "latest_steps": latest_steps,
+        "history": history_with_steps,
     }
 
 

@@ -146,18 +146,50 @@ export const fetchGlobalMarketStats = async () => {
 /**
  * Fetch detailed market data with more information
  * Returns both coin data and global market stats
+ * Includes retry logic with exponential backoff for rate limiting (429 errors)
  */
-export const fetchDetailedMarketData = async () => {
+export const fetchDetailedMarketData = async (retryCount = 0, maxRetries = 3) => {
   try {
     const ids = Object.values(TRACKED_CRYPTO_IDS).join(',');
     
-    // Fetch coin market data and global stats in parallel using backend proxy
-    const [coinsResponse, globalStatsResponse] = await Promise.all([
-      fetch(
-        `${API_BASE_URL}/api/crypto/markets?vs_currency=usd&ids=${ids}&order=market_cap_desc&per_page=20&page=1&sparkline=true&price_change_percentage=1h%2C24h%2C7d`
-      ),
-      fetch(`${API_BASE_URL}/api/crypto/global-stats`).catch(() => null) // Optional, don't fail if this fails
-    ]);
+    // Fetch coin market data first (required)
+    const coinsResponse = await fetch(
+      `${API_BASE_URL}/api/crypto/markets?vs_currency=usd&ids=${ids}&order=market_cap_desc&per_page=20&page=1&sparkline=true&price_change_percentage=1h%2C24h%2C7d`
+    );
+    
+    // Handle 429 (Too Many Requests) with exponential backoff retry
+    if (coinsResponse.status === 429) {
+      if (retryCount < maxRetries) {
+        const backoffDelay = Math.min(1000 * Math.pow(2, retryCount), 30000); // Max 30 seconds
+        console.warn(`Rate limited (429). Retrying in ${backoffDelay}ms... (attempt ${retryCount + 1}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, backoffDelay));
+        return fetchDetailedMarketData(retryCount + 1, maxRetries);
+      } else {
+        throw new Error('Rate limit exceeded. Please wait before refreshing.');
+      }
+    }
+    
+    // Handle 502 Bad Gateway (backend error, might have cached data)
+    if (coinsResponse.status === 502) {
+      const errorText = await coinsResponse.text();
+      let errorMessage = `Backend error: ${coinsResponse.status}`;
+      try {
+        const errorData = JSON.parse(errorText);
+        errorMessage = errorData.detail || errorMessage;
+        // If it's a rate limit error, retry
+        if (errorMessage.includes('429') || errorMessage.includes('Rate limit')) {
+          if (retryCount < maxRetries) {
+            const backoffDelay = Math.min(1000 * Math.pow(2, retryCount), 30000);
+            console.warn(`Backend rate limited. Retrying in ${backoffDelay}ms... (attempt ${retryCount + 1}/${maxRetries})`);
+            await new Promise(resolve => setTimeout(resolve, backoffDelay));
+            return fetchDetailedMarketData(retryCount + 1, maxRetries);
+          }
+        }
+      } catch (e) {
+        // Ignore parse errors
+      }
+      throw new Error(errorMessage);
+    }
     
     if (!coinsResponse.ok) {
       const errorText = await coinsResponse.text();
@@ -171,12 +203,29 @@ export const fetchDetailedMarketData = async () => {
       throw new Error(errorMessage);
     }
     
+    // Fetch global stats separately (optional, don't fail if this fails)
+    let globalStatsResponse = null;
+    try {
+      globalStatsResponse = await fetch(`${API_BASE_URL}/api/crypto/global-stats`);
+      // Don't throw on errors for global stats, just log
+      if (!globalStatsResponse.ok) {
+        console.warn(`Global stats fetch failed: ${globalStatsResponse.status}`);
+      }
+    } catch (e) {
+      console.warn('Global stats fetch error (non-critical):', e);
+    }
+    
     const coinsData = await coinsResponse.json();
     let globalStats = null;
     
+    // Try to get global stats if available (non-critical)
     if (globalStatsResponse && globalStatsResponse.ok) {
-      const globalData = await globalStatsResponse.json();
-      globalStats = globalData.data;
+      try {
+        const globalData = await globalStatsResponse.json();
+        globalStats = globalData.data || globalData;
+      } catch (e) {
+        console.warn('Failed to parse global stats:', e);
+      }
     }
     
     // Transform to our format
