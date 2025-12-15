@@ -15,12 +15,18 @@ export const removeDuplicates = (data) => {
     try {
       // Create a normalized string representation
       // Sort keys to ensure consistent comparison
+      // Trim string values so whitespace-only differences are treated as duplicates
       let normalized
       if (item && typeof item === 'object') {
         const keys = Object.keys(item).sort()
-        normalized = JSON.stringify(item, keys)
+        const trimmed = {}
+        for (const key of keys) {
+          const value = item[key]
+          trimmed[key] = typeof value === 'string' ? value.trim() : value
+        }
+        normalized = JSON.stringify(trimmed, keys)
       } else {
-        normalized = JSON.stringify(item)
+        normalized = typeof item === 'string' ? JSON.stringify(item.trim()) : JSON.stringify(item)
       }
       
       if (!seen.has(normalized)) {

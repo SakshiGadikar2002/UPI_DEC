@@ -117,8 +117,8 @@
 }
 
 .profile-avatar {
-  width: 40px;
-  height: 40px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   background: #78176b;
   display: flex;
@@ -127,7 +127,7 @@
   cursor: pointer;
   transition: all 0.2s;
   border: 2px solid #fff;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  /* box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); */
 }
 
 .profile-avatar:hover {
@@ -136,7 +136,7 @@
 }
 
 .avatar-initials {
-  font-size: 0.9rem;
+  font-size: 0.7rem;
   font-weight: 700;
   color: #ffffff;
   line-height: 1;

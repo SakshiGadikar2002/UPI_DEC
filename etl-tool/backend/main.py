@@ -2888,22 +2888,23 @@ async def process_file(request: ProcessFileRequest):
             "totalColumns": initial_columns
         }
         
-        # Transform data - Always remove duplicates and clean data (same as CSV/JSON)
+        # Transform data - Always clean before deduping (same as CSV/JSON)
         transformed_df = df.copy()
-        
-        # Remove duplicates (same as frontend does for CSV/JSON)
-        rows_before_dedup = len(transformed_df)
-        transformed_df = transformed_df.drop_duplicates()
-        duplicate_count = rows_before_dedup - len(transformed_df)
-        
-        # Clean data: trim whitespace from string columns
+
+        # Clean data: trim whitespace from string columns first so
+        # values that differ only by spaces are treated as the same row.
         for col in transformed_df.columns:
             if transformed_df[col].dtype == 'object':
                 transformed_df[col] = transformed_df[col].astype(str).str.strip()
-        
+
         # Remove rows where all values are empty
         transformed_df = transformed_df.dropna(how='all')
         transformed_df = transformed_df[transformed_df.astype(str).ne('').any(axis=1)]
+
+        # Remove duplicates after cleaning (matches frontend logic)
+        rows_before_dedup = len(transformed_df)
+        transformed_df = transformed_df.drop_duplicates()
+        duplicate_count = rows_before_dedup - len(transformed_df)
         
         rows_after_transform = len(transformed_df)
         

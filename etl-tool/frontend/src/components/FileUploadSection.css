@@ -103,7 +103,7 @@
 .processing-results-section {
   margin-top: 25px;
   padding: 20px;
-  background: #f8f9fa;
+  /* background: #f8f9fa; */
   border-radius: 8px;
   border: 1px solid #e0e0e0;
 }
@@ -119,9 +119,9 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 15px;
+  /* padding: 12px 15px;
   background: #d4edda;
-  border: 1px solid #c3e6cb;
+  border: 1px solid #c3e6cb; */
   border-radius: 6px;
   color: #155724;
   font-weight: 500;
@@ -134,9 +134,9 @@
 }
 
 /* Pipeline Steps Section */
-.pipeline-steps-section {
+/* .pipeline-steps-section {
   margin-bottom: 25px;
-}
+} */
 
 .pipeline-steps-section h4 {
   margin: 0 0 15px 0;
@@ -156,7 +156,7 @@
   padding: 15px;
   border-radius: 6px;
   border-left: 3px solid #28a745;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  /* box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); */
 }
 
 .step-header-row {

@@ -1148,7 +1148,7 @@ function APISection({ data, setData }) {
             <div className="quick-connect-header">
               <h3>
                 <span className="rocket-icon">🚀</span>
-                Quick Connect - Real-Time Crypto Data
+                Quick Connect - Non-Realtime Crypto Data
               </h3>
               <p>Click any button below to instantly connect to real-time cryptocurrency data:</p>
             </div>
