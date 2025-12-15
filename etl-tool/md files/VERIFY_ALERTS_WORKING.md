@@ -64,9 +64,9 @@ curl -X POST http://localhost:8000/api/alerts/check \
 
 # Method 2: Using Python test script
 cd backend
-python test_crypto_alerts_realtime.py
 
-# Method 3: Check if scheduler is running
+
+# Method 3: python test_crypto_alerts_realtime.pyCheck if scheduler is running
 # The alert scheduler automatically checks every 5 minutes
 # Look for logs: "Alert check: X checked, Y triggered, Z emails sent"
 ```

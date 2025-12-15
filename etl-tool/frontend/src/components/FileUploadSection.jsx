@@ -339,6 +339,27 @@ function FileUploadSection({ data, setData }) {
         setError(null)
         
       } else if (fileType === 'csv' || fileType === 'json') {
+        // Upload to backend as well so CSV/JSON appear in the files table
+        let fileId = uploadedFileId
+        if (!fileId) {
+          const formData = new FormData()
+          formData.append('file', selectedFile)
+
+          const uploadResponse = await fetch('http://localhost:8000/api/files/upload', {
+            method: 'POST',
+            body: formData
+          })
+
+          if (!uploadResponse.ok) {
+            const errorData = await uploadResponse.json().catch(() => ({ detail: 'Unknown error' }))
+            throw new Error(errorData.detail || `HTTP error! status: ${uploadResponse.status}`)
+          }
+
+          const uploadResult = await uploadResponse.json()
+          fileId = uploadResult.file_id
+          setUploadedFileId(fileId)
+        }
+
         // Read file and extract data
         const reader = new FileReader()
         
