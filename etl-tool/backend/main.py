@@ -795,60 +795,112 @@ async def save_to_database(message: dict):
             source_id = hashlib.md5(f"{connector_id}_{timestamp}_{json.dumps(data)}".encode()).hexdigest()[:16]
             session_id = message.get("session_id", str(uuid.uuid4()))
             
-            # Insert into api_connector_data table (dedicated table for API connector data)
-            # Try with foreign key constraint first; if fails (scheduled APIs), insert without it
-            try:
-                inserted_id = await conn.fetchval("""
-                    INSERT INTO api_connector_data (
-                        connector_id, timestamp, exchange, instrument, price, data, 
-                        message_type, raw_response, status_code, response_time_ms, source_id, session_id
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-                    RETURNING id
-                """, 
-                    connector_id, timestamp, exchange, instrument, price, 
-                    json.dumps(data), message_type, 
-                    json.dumps(raw_response) if raw_response else None,
-                    status_code, response_time_ms, source_id, session_id
-                )
-            except Exception as fk_error:
-                # If foreign key constraint fails (e.g., for scheduled APIs), try inserting with NULL connector_id reference
-                # This allows scheduled API data to be stored without requiring a connector record
-                if "foreign key constraint" in str(fk_error).lower():
-                    logger.debug(f"[OK] Inserting scheduled API data (bypassing FK constraint): {connector_id}")
-                    try:
-                        # Insert directly without FK constraint by using a special marker
-                        inserted_id = await conn.fetchval("""
+            # Helper to persist a single row so list payloads fan out into multiple records
+            async def _insert_row(row_data, row_raw, row_price, row_instrument, row_source_id_suffix=None):
+                nonlocal connector_id
+                row_source_id = source_id if row_source_id_suffix is None else f"{source_id}-{row_source_id_suffix}"
+                try:
+                    return await conn.fetchval(
+                        """
+                        INSERT INTO api_connector_data (
+                            connector_id, timestamp, exchange, instrument, price, data, 
+                            message_type, raw_response, status_code, response_time_ms, source_id, session_id
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                        RETURNING id
+                        """,
+                        connector_id,
+                        timestamp,
+                        exchange,
+                        row_instrument,
+                        row_price,
+                        json.dumps(row_data),
+                        message_type,
+                        json.dumps(row_raw) if row_raw is not None else None,
+                        status_code,
+                        response_time_ms,
+                        row_source_id,
+                        session_id,
+                    )
+                except Exception as fk_error:
+                    if "foreign key constraint" in str(fk_error).lower():
+                        # Allow scheduled APIs without a connector record
+                        connector_id = f"scheduled_{connector_id}"
+                        return await conn.fetchval(
+                            """
                             INSERT INTO api_connector_data (
                                 connector_id, timestamp, exchange, instrument, price, data, 
                                 message_type, raw_response, status_code, response_time_ms, source_id, session_id
                             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                             RETURNING id
-                        """, 
-                            f"scheduled_{connector_id}", timestamp, exchange, instrument, price, 
-                            json.dumps(data), message_type, 
-                            json.dumps(raw_response) if raw_response else None,
-                            status_code, response_time_ms, source_id, session_id
+                            """,
+                            connector_id,
+                            timestamp,
+                            exchange,
+                            row_instrument,
+                            row_price,
+                            json.dumps(row_data),
+                            message_type,
+                            json.dumps(row_raw) if row_raw is not None else None,
+                            status_code,
+                            response_time_ms,
+                            row_source_id,
+                            session_id,
                         )
-                        connector_id = f"scheduled_{connector_id}"
-                    except Exception as retry_error:
-                        logger.error(f"[ERROR] Failed to insert scheduled API data even with marker: {retry_error}")
-                        raise
-                else:
                     raise
-            
+
+            inserted_ids = []
+            records_saved = 0
+
+            if isinstance(data, list):
+                for idx, item in enumerate(data):
+                    row_data = item if isinstance(item, (dict, list)) else {"value": item}
+                    row_raw = raw_response if raw_response is not None else row_data
+                    row_price = (
+                        row_data.get("price")
+                        if isinstance(row_data, dict)
+                        else price
+                    ) or price
+                    row_instrument = (
+                        row_data.get("symbol")
+                        if isinstance(row_data, dict)
+                        else instrument
+                    ) or instrument
+                    row_id = await _insert_row(row_data, row_raw, row_price, row_instrument, idx)
+                    inserted_ids.append(row_id)
+                    records_saved += 1
+            else:
+                row_data = data
+                row_raw = raw_response
+                row_id = await _insert_row(row_data, row_raw, price, instrument)
+                inserted_ids.append(row_id)
+                records_saved = 1
+
             # Also insert into websocket_messages for backward compatibility
-            await conn.execute("""
+            await conn.execute(
+                """
                 INSERT INTO websocket_messages (
                     timestamp, exchange, instrument, price, data, message_type
                 ) VALUES ($1, $2, $3, $4, $5, $6)
-            """, timestamp, exchange, instrument, price, json.dumps(data), message_type)
-            
-            logger.info(f"[DB] ✅ Saved to database: id={inserted_id}, connector_id={connector_id}, exchange={exchange}, timestamp={timestamp}")
-            print(f"[DB] ✅ Saved to database: id={inserted_id}, connector_id={connector_id}, exchange={exchange}")
-            
-            # Return the saved record
+                """,
+                timestamp,
+                exchange,
+                instrument,
+                price,
+                json.dumps(data),
+                message_type,
+            )
+
+            logger.info(
+                f"[DB] ✅ Saved {records_saved} record(s) to database for connector_id={connector_id}, exchange={exchange}, timestamp={timestamp}"
+            )
+            print(
+                f"[DB] ✅ Saved {records_saved} record(s) to database for connector_id={connector_id}, exchange={exchange}"
+            )
+
+            # Return metadata (include all IDs so callers can log details/counts)
             return {
-                "id": inserted_id,
+                "ids": inserted_ids,
+                "records_saved": records_saved,
                 "source_id": source_id,
                 "session_id": session_id,
                 "connector_id": connector_id,
@@ -860,7 +912,7 @@ async def save_to_database(message: dict):
                 "message_type": message_type,
                 "raw_response": raw_response,
                 "status_code": status_code,
-                "response_time_ms": response_time_ms
+                "response_time_ms": response_time_ms,
             }
     except Exception as e:
         logger.error(f"Error saving to database: {e}")

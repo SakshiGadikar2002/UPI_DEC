@@ -980,7 +980,10 @@ async def log_pipeline_step(
                 status = $1,
                 details = COALESCE($2, details),
                 error_message = $3,
-                started_at = COALESCE(started_at, CASE WHEN $1 = 'running' THEN $4 ELSE started_at END),
+                started_at = COALESCE(
+                    started_at,
+                    CASE WHEN $1 IN ('running','success','failure') THEN $4 ELSE started_at END
+                ),
                 completed_at = CASE WHEN $1 IN ('success','failure') THEN $4 ELSE completed_at END
             WHERE run_id = $5 AND step_name = $6
             """,

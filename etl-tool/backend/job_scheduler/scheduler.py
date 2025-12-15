@@ -169,6 +169,7 @@ class JobScheduler:
         run_error = None
         run_status = "success"
         response = None
+        record_count = 0
 
         def _log_step(step_name: str, status: str, details: Dict[str, Any] = None, error_message: str = None):
             """Log pipeline step status asynchronously."""
@@ -185,7 +186,7 @@ class JobScheduler:
                         error_message=error_message,
                     ),
                     self.event_loop,
-                )
+                ).result(timeout=5)
             except Exception as log_err:
                 logger.debug(f"[PIPELINE] Failed to log step {step_name} for {api_id}: {log_err}")
         
@@ -217,7 +218,11 @@ class JobScheduler:
                 timeout=15
             )
             response_time_ms = int((time.time() - start_time) * 1000)
-            _log_step("extract", "success", {"status_code": response.status_code, "response_time_ms": response_time_ms})
+            _log_step(
+                "extract",
+                "success",
+                {"status_code": response.status_code, "response_time_ms": response_time_ms},
+            )
 
             if response.status_code >= 400:
                 run_status = "failure"
@@ -249,7 +254,8 @@ class JobScheduler:
                     "parsed_keys": list(data.keys()) if isinstance(data, dict) else None,
                 },
             )
-            _log_step("clean", "success", {"records": len(data) if isinstance(data, list) else 1})
+            record_count = len(data) if isinstance(data, list) else 1
+            _log_step("clean", "success", {"records": record_count})
 
             # ETL: Load
             _log_step("load", "running")
@@ -270,9 +276,13 @@ class JobScheduler:
             
             # Schedule async save on event loop
             try:
-                asyncio.run_coroutine_threadsafe(
+                save_future = asyncio.run_coroutine_threadsafe(
                     self.save_callback(message),
-                    self.event_loop
+                    self.event_loop,
+                )
+                save_result = save_future.result(timeout=20)
+                records_saved = (
+                    save_result.get("records_saved", 0) if isinstance(save_result, dict) else 0
                 )
                 
                 # Also save individual items if callback provided
@@ -292,7 +302,15 @@ class JobScheduler:
                 else:
                     logger.debug(f"[JOB] save_items_callback is None!")
                 
-                _log_step("load", "success", {"status_code": response.status_code})
+                _log_step(
+                    "load",
+                    "success",
+                    {
+                        "status_code": response.status_code,
+                        "records_saved": records_saved or record_count,
+                        "records": records_saved or record_count,
+                    },
+                )
                 logger.info(f"[JOB] ✅ {api_name}: Saved to DB (status={response.status_code}, time={response_time_ms}ms)")
                 print(f"[JOB] ✅ {api_name}: Saved to DB (status={response.status_code}, time={response_time_ms}ms)")
             except Exception as e:
