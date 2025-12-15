@@ -383,7 +383,7 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
                   onClick={() => setShowFitViewModal(true)}
                   title="Open full view in popup"
                 >
-                  🔍 Fit View
+                  POP UP VIEW
                 </button>
                 <ReactFlow
                   nodes={nodes}
@@ -445,7 +445,7 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
                     <div className="history-row">
                       <span className={`status-pill status-${run.status}`}>{run.status}</span>
                       <span className="history-time">
-                        {run.started_at ? new Date(run.started_at).toLocaleTimeString() : '-'}
+                        {run.started_at ? new Date(run.started_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : '-'}
                       </span>
                     </div>
                     <div className="history-hint">
@@ -461,7 +461,7 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
                         <div className="history-row">
                           <span className={`status-pill status-${run.status}`}>{run.status}</span>
                           <span className="history-time">
-                            {run.started_at ? new Date(run.started_at).toLocaleTimeString() : '-'}
+                            {run.started_at ? new Date(run.started_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : '-'}
                           </span>
                         </div>
                         <div className="history-hint">

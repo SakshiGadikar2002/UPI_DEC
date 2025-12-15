@@ -1064,36 +1064,48 @@ function APISection({ data, setData }) {
                 ? new Date(api.last_timestamp).toLocaleString()
                 : 'No data yet'
               return (
-                <div className="active-api-card" key={api.connector_id}>
-                  <div className="active-api-card-content">
-                    <div className="active-api-card-top">
-                      <div className="active-api-title-section">
-                        {api.status === 'ACTIVE' && (
-                          <span className="active-status-dot"></span>
-                        )}
-                        <div>
-                          <div className="active-api-name">{api.name}</div>
-                          <div className="active-api-url">{api.api_url}</div>
-                        </div>
+                <div className="pipeline-card-enhanced" key={api.connector_id}>
+                  <div className="pipeline-card-header">
+                    <div className="pipeline-card-title-group">
+                      {api.status === 'ACTIVE' && (
+                        <span className="pipeline-status-indicator active"></span>
+                      )}
+                      <div className="pipeline-card-title-info">
+                        <h4 className="pipeline-card-name">{api.name}</h4>
+                        <p className="pipeline-card-url">{api.api_url}</p>
                       </div>
                     </div>
-                    <div className="active-api-meta">
-                      <strong>Last data:</strong> {lastSeen}
+                    <button
+                      className="pipeline-view-button"
+                      onClick={() => {
+                        setSelectedActiveApi(api.connector_id)
+                        setShowPipelineView(true)
+                        setPipelineViewExpanded(true)
+                      }}
+                    >
+                      View Pipeline →
+                    </button>
+                  </div>
+                  <div className="pipeline-card-stats">
+                    <div className="pipeline-stat-item">
+                      <span className="pipeline-stat-label">Status</span>
+                      <span className={`pipeline-stat-value status-${api.status?.toLowerCase() || 'inactive'}`}>
+                        {api.status || 'INACTIVE'}
+                      </span>
                     </div>
-                    <div className="active-api-meta">
-                      <strong>Records:</strong> {api.total_records || 0} • <strong>Items:</strong> {api.total_items || 0}
+                    <div className="pipeline-stat-item">
+                      <span className="pipeline-stat-label">Records</span>
+                      <span className="pipeline-stat-value">{api.total_records || 0}</span>
+                    </div>
+                    <div className="pipeline-stat-item">
+                      <span className="pipeline-stat-label">Items</span>
+                      <span className="pipeline-stat-value">{api.total_items || 0}</span>
+                    </div>
+                    <div className="pipeline-stat-item">
+                      <span className="pipeline-stat-label">Last Data</span>
+                      <span className="pipeline-stat-value time">{lastSeen}</span>
                     </div>
                   </div>
-                  <button
-                    className="extract-button-small"
-                    onClick={() => {
-                      setSelectedActiveApi(api.connector_id)
-                      setShowPipelineView(true)
-                      setPipelineViewExpanded(true)
-                    }}
-                  >
-                    View Pipeline
-                  </button>
                 </div>
               )
             })}

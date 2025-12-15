@@ -3090,6 +3090,91 @@ const convertToOKXFormat = (symbol) => {
                           ? fullTime.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })
                           : label;
                         
+                        // Process payload - ensure we correctly identify each currency
+                        // The dataKey in Recharts should match the dataKey prop of the Line component
+                        const processedPayload = payload
+                          .map(entry => {
+                            // The dataKey should be the symbol (e.g., "BTCUSDT", "ETHUSDT")
+                            // This is set in the Line component as dataKey={symbol}
+                            let symbol = entry.dataKey;
+                            
+                            // Debug: Log to see what we're getting
+                            // console.log('Tooltip entry:', { dataKey: entry.dataKey, name: entry.name, value: entry.value, payload: entry });
+                            
+                            // If dataKey is not available, try to find the symbol from selectedInstruments
+                            // by matching the entry's color or other properties
+                            if (!symbol || typeof symbol !== 'string') {
+                              // Try to find symbol by matching the color with our color map
+                              const colorMap = {
+                                '#3b82f6': 'BTCUSDT',
+                                '#10b981': 'ETHUSDT',
+                                '#f97316': 'BNBUSDT',
+                                '#06b6d4': 'SOLUSDT',
+                                '#8b5cf6': 'XRPUSDT',
+                                '#ef4444': 'ADAUSDT',
+                                '#f59e0b': 'DOGEUSDT',
+                                '#ec4899': 'MATICUSDT',
+                                '#14b8a6': 'DOTUSDT',
+                                '#84cc16': 'AVAXUSDT',
+                                '#f43f5e': 'SHIBUSDT',
+                                '#a855f7': 'TRXUSDT',
+                                '#22c55e': 'LINKUSDT',
+                                '#eab308': 'UNIUSDT',
+                                '#0ea5e9': 'ATOMUSDT',
+                                '#6366f1': 'LTCUSDT',
+                                '#fb923c': 'ETCUSDT',
+                                '#34d399': 'XLMUSDT',
+                                '#60a5fa': 'ALGOUSDT',
+                                '#c084fc': 'NEARUSDT',
+                              };
+                              
+                              // Try to find symbol by color
+                              if (entry.color && colorMap[entry.color]) {
+                                symbol = colorMap[entry.color];
+                              } else {
+                                // Last resort: try to match by checking which symbol has this value in dataPoint
+                                for (const sym of selectedInstruments) {
+                                  if (dataPoint?.[sym] === entry.value || Math.abs((dataPoint?.[sym] || 0) - (entry.value || 0)) < 0.01) {
+                                    symbol = sym;
+                                    break;
+                                  }
+                                }
+                              }
+                            }
+                            
+                            // Ensure symbol is valid
+                            if (!symbol || typeof symbol !== 'string') {
+                              return null;
+                            }
+                            
+                            // Normalize symbol (remove any extra spaces)
+                            symbol = symbol.trim();
+                            
+                            // Verify this symbol is in our selected instruments
+                            if (!selectedInstruments.includes(symbol)) {
+                              return null;
+                            }
+                            
+                            // Get the value for this symbol from the dataPoint
+                            // Use entry.value as fallback if dataPoint doesn't have it
+                            const value = dataPoint?.[symbol] !== undefined ? dataPoint[symbol] : entry.value;
+                            if (value === null || value === undefined) {
+                              return null;
+                            }
+                            
+                            // Get price from dataPoint
+                            const priceKey = `${symbol}_price`;
+                            const price = dataPoint?.[priceKey] || 0;
+                            
+                            return {
+                              symbol,
+                              value: typeof value === 'number' ? value : parseFloat(value) || 0,
+                              price,
+                              color: entry.color || '#3b82f6'
+                            };
+                          })
+                          .filter(Boolean);
+                        
                         return (
                           <div style={{
                             backgroundColor: 'rgba(255, 255, 255, 0.98)', 
@@ -3110,40 +3195,40 @@ const convertToOKXFormat = (symbol) => {
                             }}>
                               {timeLabel}
                             </p>
-                            {payload
+                            {processedPayload
                               .sort((a, b) => {
                                 // Sort by symbol name for consistent display (alphabetical)
-                                const aSymbol = CRYPTO_NAMES[a.dataKey]?.symbol || a.dataKey.replace('USDT', '');
-                                const bSymbol = CRYPTO_NAMES[b.dataKey]?.symbol || b.dataKey.replace('USDT', '');
+                                const aSymbol = CRYPTO_NAMES[a.symbol]?.symbol || a.symbol.replace('USDT', '');
+                                const bSymbol = CRYPTO_NAMES[b.symbol]?.symbol || b.symbol.replace('USDT', '');
                                 return aSymbol.localeCompare(bSymbol);
                               })
-                              .map((entry, index) => {
-                                const symbol = entry.dataKey;
-                                const priceKey = `${symbol}_price`;
-                                const price = dataPoint?.[priceKey] || comparisonData.find(d => d.time === label)?.[priceKey] || 0;
-                                const cryptoInfo = CRYPTO_NAMES[symbol] || { name: symbol, symbol: symbol.replace('USDT', '') };
-                                const displayName = `${cryptoInfo.symbol}`;
-                                const value = entry.value || 0;
-                                const isPositive = value >= 0;
+                              .map((item, index) => {
+                                const cryptoInfo = CRYPTO_NAMES[item.symbol] || { 
+                                  name: item.symbol, 
+                                  symbol: item.symbol.replace('USDT', '') 
+                                };
+                                const displayName = cryptoInfo.symbol || item.symbol.replace('USDT', '');
+                                const isPositive = item.value >= 0;
+                                
                                 return (
-                                  <p key={index} style={{ 
+                                  <p key={`${item.symbol}-${index}`} style={{ 
                                     margin: '4px 0', 
                                     fontSize: '12px',
                                     color: '#374151',
                                     lineHeight: '1.5'
                                   }}>
-                                    <span style={{ fontWeight: 600, color: entry.color }}>
+                                    <span style={{ fontWeight: 600, color: item.color }}>
                                       {displayName}:
                                     </span>{' '}
                                     <span style={{ 
                                       color: isPositive ? '#10b981' : '#ef4444',
                                       fontWeight: 600
                                     }}>
-                                      {isPositive ? '+' : ''}{value.toFixed(2)}%
+                                      {isPositive ? '+' : ''}{item.value.toFixed(2)}%
                                     </span>
-                                    {price > 0 && (
+                                    {item.price > 0 && (
                                       <span style={{ color: '#6b7280', marginLeft: '8px', fontWeight: 500 }}>
-                                        (${price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                                        (${item.price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
                                       </span>
                                     )}
                                   </p>
