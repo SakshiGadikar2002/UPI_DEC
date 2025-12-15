@@ -346,6 +346,30 @@ const convertToOKXFormat = (symbol) => {
   const [allComparisonData, setAllComparisonData] = useState([]); // Store all data for filtering
   const [isInstrumentSelectorCollapsed, setIsInstrumentSelectorCollapsed] = useState(false); // Collapsible state
   
+// Forward-fill missing comparison values so every timestamp has every symbol
+const fillComparisonData = (dataPoints, symbols) => {
+  const lastValues = {};
+  const lastPrices = {};
+  return dataPoints.map((point) => {
+    const filled = { ...point };
+    symbols.forEach((sym) => {
+      if (typeof filled[sym] === 'number') {
+        lastValues[sym] = filled[sym];
+      } else if (lastValues[sym] !== undefined) {
+        filled[sym] = lastValues[sym];
+      }
+
+      const priceKey = `${sym}_price`;
+      if (typeof filled[priceKey] === 'number') {
+        lastPrices[sym] = filled[priceKey];
+      } else if (lastPrices[sym] !== undefined) {
+        filled[priceKey] = lastPrices[sym];
+      }
+    });
+    return filled;
+  });
+};
+
   const socketRef = useRef(null);
   const priceSocketRef = useRef(null); // Separate socket for price updates
   const historySaveIntervalRef = useRef(null);
@@ -1144,6 +1168,9 @@ const convertToOKXFormat = (symbol) => {
       let allDataWithTimestamp = Array.from(timeMap.values())
         .sort((a, b) => a.timestamp - b.timestamp);
 
+      // Forward-fill so every timestamp has every symbol
+      allDataWithTimestamp = fillComparisonData(allDataWithTimestamp, selectedInstruments);
+
       // If no data points from chart data, create initial data points from current prices
       if (allDataWithTimestamp.length === 0) {
         const now = Date.now();
@@ -1186,7 +1213,7 @@ const convertToOKXFormat = (symbol) => {
       const filterTime = currentFilter * 60 * 60 * 1000; // Convert hours to milliseconds
       const cutoffTime = now - filterTime;
 
-      const filteredData = allDataWithTimestamp
+      const filteredData = fillComparisonData(allDataWithTimestamp, selectedInstruments)
         .filter(item => item.timestamp >= cutoffTime)
         .map(item => {
           const { timestamp, fullTime, ...rest } = item;
@@ -1301,6 +1328,9 @@ const convertToOKXFormat = (symbol) => {
       let allDataWithTimestamp = Array.from(timeMap.values())
         .sort((a, b) => a.timestamp - b.timestamp);
 
+      // Forward-fill missing values for all symbols
+      allDataWithTimestamp = fillComparisonData(allDataWithTimestamp, selectedInstruments);
+
       // Store all data
       setAllComparisonData(allDataWithTimestamp);
 
@@ -1310,7 +1340,7 @@ const convertToOKXFormat = (symbol) => {
       const filterTime = currentFilter * 60 * 60 * 1000;
       const cutoffTime = now - filterTime;
 
-      const filteredData = allDataWithTimestamp
+      const filteredData = fillComparisonData(allDataWithTimestamp, selectedInstruments)
         .filter(item => item.timestamp >= cutoffTime)
         .map(item => {
           const { timestamp, fullTime, ...rest } = item;
@@ -3090,87 +3120,23 @@ const convertToOKXFormat = (symbol) => {
                           ? fullTime.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true })
                           : label;
                         
-                        // Process payload - ensure we correctly identify each currency
-                        // The dataKey in Recharts should match the dataKey prop of the Line component
+                        // Process payload directly from Recharts; each entry maps to the Line dataKey
                         const processedPayload = payload
                           .map(entry => {
-                            // The dataKey should be the symbol (e.g., "BTCUSDT", "ETHUSDT")
-                            // This is set in the Line component as dataKey={symbol}
-                            let symbol = entry.dataKey;
-                            
-                            // Debug: Log to see what we're getting
-                            // console.log('Tooltip entry:', { dataKey: entry.dataKey, name: entry.name, value: entry.value, payload: entry });
-                            
-                            // If dataKey is not available, try to find the symbol from selectedInstruments
-                            // by matching the entry's color or other properties
-                            if (!symbol || typeof symbol !== 'string') {
-                              // Try to find symbol by matching the color with our color map
-                              const colorMap = {
-                                '#3b82f6': 'BTCUSDT',
-                                '#10b981': 'ETHUSDT',
-                                '#f97316': 'BNBUSDT',
-                                '#06b6d4': 'SOLUSDT',
-                                '#8b5cf6': 'XRPUSDT',
-                                '#ef4444': 'ADAUSDT',
-                                '#f59e0b': 'DOGEUSDT',
-                                '#ec4899': 'MATICUSDT',
-                                '#14b8a6': 'DOTUSDT',
-                                '#84cc16': 'AVAXUSDT',
-                                '#f43f5e': 'SHIBUSDT',
-                                '#a855f7': 'TRXUSDT',
-                                '#22c55e': 'LINKUSDT',
-                                '#eab308': 'UNIUSDT',
-                                '#0ea5e9': 'ATOMUSDT',
-                                '#6366f1': 'LTCUSDT',
-                                '#fb923c': 'ETCUSDT',
-                                '#34d399': 'XLMUSDT',
-                                '#60a5fa': 'ALGOUSDT',
-                                '#c084fc': 'NEARUSDT',
-                              };
-                              
-                              // Try to find symbol by color
-                              if (entry.color && colorMap[entry.color]) {
-                                symbol = colorMap[entry.color];
-                              } else {
-                                // Last resort: try to match by checking which symbol has this value in dataPoint
-                                for (const sym of selectedInstruments) {
-                                  if (dataPoint?.[sym] === entry.value || Math.abs((dataPoint?.[sym] || 0) - (entry.value || 0)) < 0.01) {
-                                    symbol = sym;
-                                    break;
-                                  }
-                                }
-                              }
-                            }
-                            
-                            // Ensure symbol is valid
-                            if (!symbol || typeof symbol !== 'string') {
-                              return null;
-                            }
-                            
-                            // Normalize symbol (remove any extra spaces)
-                            symbol = symbol.trim();
-                            
-                            // Verify this symbol is in our selected instruments
-                            if (!selectedInstruments.includes(symbol)) {
-                              return null;
-                            }
-                            
-                            // Get the value for this symbol from the dataPoint
-                            // Use entry.value as fallback if dataPoint doesn't have it
-                            const value = dataPoint?.[symbol] !== undefined ? dataPoint[symbol] : entry.value;
-                            if (value === null || value === undefined) {
-                              return null;
-                            }
-                            
-                            // Get price from dataPoint
-                            const priceKey = `${symbol}_price`;
-                            const price = dataPoint?.[priceKey] || 0;
-                            
+                            const symbol = (entry.dataKey || entry.name || '').trim();
+                            if (!symbol || !selectedInstruments.includes(symbol)) return null;
+
+                            const value = typeof entry.value === 'number' ? entry.value : Number(entry.value) || 0;
+                            const price =
+                              entry.payload?.[`${symbol}_price`] ??
+                              dataPoint?.[`${symbol}_price`] ??
+                              0;
+
                             return {
                               symbol,
-                              value: typeof value === 'number' ? value : parseFloat(value) || 0,
+                              value,
                               price,
-                              color: entry.color || '#3b82f6'
+                              color: entry.color || '#3b82f6',
                             };
                           })
                           .filter(Boolean);

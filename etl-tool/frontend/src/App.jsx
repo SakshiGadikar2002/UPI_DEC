@@ -11,6 +11,7 @@ import AuthForm from './components/AuthForm'
 import PipelineViewer from './components/PipelineViewer'
 import './App.css'
 
+// Root application component: handles auth, layout, and routing between sections.
 function App() {
   const [activeSection, setActiveSection] = useState('files')
   const [sidebarOpen, setSidebarOpen] = useState(true)
@@ -27,6 +28,7 @@ function App() {
   // Default to backend on 8000; can be overridden via VITE_API_BASE
   const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
 
+  // Helper for authenticated fetch calls
   const authFetch = async (path, options = {}) => {
     const resp = await fetch(`${apiBase}${path}`, {
       ...options,
@@ -42,6 +44,7 @@ function App() {
     return resp
   }
 
+  // Load user profile if token is present
   const loadProfile = async (incomingToken) => {
     const usableToken = incomingToken || token
     if (!usableToken) return
@@ -67,6 +70,7 @@ function App() {
     }
   }
 
+  // Attempt profile load on initial mount if token exists
   useEffect(() => {
     if (token) {
       loadProfile(token)
@@ -75,6 +79,7 @@ function App() {
   }, [])
 
   // Load history from localStorage on mount
+  // Load history (lightweight metadata) from localStorage on mount
   useEffect(() => {
     try {
       const savedHistory = localStorage.getItem('etl-history')
@@ -96,6 +101,7 @@ function App() {
   }, [])
 
   // Save history to localStorage whenever it changes
+  // Persist history to localStorage, trimming if it grows too large
   useEffect(() => {
     if (history.length === 0) {
       try {
@@ -142,6 +148,7 @@ function App() {
     }
   }, [history])
 
+  // Update per-section data and append lightweight history entry
   const updateSectionData = (section, data) => {
     setSectionData(prev => ({
       ...prev,
@@ -177,11 +184,13 @@ function App() {
     }
   }
 
+  // Clear saved history
   const clearHistory = () => {
     setHistory([])
     localStorage.removeItem('etl-history')
   }
 
+  // Auth: login flow
   const handleLogin = async ({ email, password }) => {
     setAuthLoading(true)
     setAuthError('')
@@ -211,6 +220,7 @@ function App() {
     }
   }
 
+  // Auth: registration flow
   const handleRegister = async ({ email, password, fullName }) => {
     setAuthLoading(true)
     setAuthError('')
@@ -234,6 +244,7 @@ function App() {
     }
   }
 
+  // Auth: logout flow
   const handleLogout = async () => {
     try {
       await authFetch('/auth/logout', { method: 'POST' })
@@ -245,6 +256,7 @@ function App() {
     localStorage.removeItem('etl-auth-token')
   }
 
+  // Route to the active section component
   const renderActiveSection = () => {
     switch (activeSection) {
       case 'files':

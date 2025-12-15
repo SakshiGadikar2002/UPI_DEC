@@ -40,8 +40,8 @@ function APISection({ data, setData }) {
   const [selectedActiveApi, setSelectedActiveApi] = useState(null)
   const [showPipelineView, setShowPipelineView] = useState(false)
   const [pipelineViewExpanded, setPipelineViewExpanded] = useState(false)
-  const [formExpanded, setFormExpanded] = useState(true)
-  const [scheduledApisExpanded, setScheduledApisExpanded] = useState(true)
+  const [formExpanded, setFormExpanded] = useState(false)
+  const [scheduledApisExpanded, setScheduledApisExpanded] = useState(false)
   const wsRef = useRef(null)
   const dataRef = useRef([])
   const lastUpdateTimeRef = useRef(0) // Track last update time for debouncing

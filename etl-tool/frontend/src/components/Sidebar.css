@@ -1,3 +1,4 @@
+/* Overlay for mobile drawer */
 .sidebar-overlay {
   position: fixed;
   top: 0;
@@ -15,6 +16,7 @@
   }
 }
 
+/* Sidebar shell */
 .sidebar {
   width: 280px;
   background: #ffffff;
@@ -40,6 +42,7 @@
 }
 
 
+/* Toggle button */
 .sidebar-toggle {
   position: fixed;
   top: 85px;
@@ -64,6 +67,7 @@
   background: #5d0f52;
 }
 
+/* Navigation list */
 .sidebar-nav {
   flex: 1;
   padding: 20px 0;
@@ -78,6 +82,7 @@
   display: none; /* Chrome, Safari, Opera */
 }
 
+/* Individual nav item */
 .sidebar-item {
   width: 100%;
   padding: 12px 16px;
@@ -131,6 +136,7 @@
   color: #78176b;
 }
 
+/* Icon sizing */
 .sidebar.closed .sidebar-icon {
   width: 28px;
   height: 28px;
@@ -148,6 +154,7 @@
   display: none;
 }
 
+/* Labels */
 .sidebar-label {
   font-size: 0.85rem;
   font-weight: 500;
@@ -159,6 +166,7 @@
   color: #666666;
 }
 
+/* Realtime badge */
 .realtime-badge {
   background: #78176b;
   color: white;
