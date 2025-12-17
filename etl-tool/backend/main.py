@@ -1161,13 +1161,13 @@ async def get_binance_symbols():
 COINGECKO_API_BASE = "https://api.coingecko.com/api/v3"
 # Rate limiting: track last request time
 _last_coingecko_request = {"time": 0}
-MIN_REQUEST_INTERVAL = 30.0  # Minimum 30 seconds between requests to avoid rate limiting
+MIN_REQUEST_INTERVAL = 20.0  # Minimum 20 seconds between requests to avoid rate limiting (optimized for 20s refresh)
 # Response cache to reduce API calls
 _coingecko_cache = {
     "markets": {"data": None, "timestamp": 0},
     "global": {"data": None, "timestamp": 0}
 }
-CACHE_DURATION = 300  # Cache responses for 5 minutes (300 seconds)
+CACHE_DURATION = 25  # Cache responses for 25 seconds to support 20s frontend refresh while respecting rate limits
 
 
 @app.get("/api/crypto/global-stats")

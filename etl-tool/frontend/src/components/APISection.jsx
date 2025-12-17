@@ -1028,7 +1028,6 @@ function APISection({ data, setData }) {
           <div className="active-api-header">
             <div>
               <h3>Scheduled APIs (Job Scheduler)</h3>
-              <p className="active-api-subtitle">8 parallel APIs run every 30 minutes. Status pulled from existing database tables.</p>
             </div>
             <div className="active-api-actions" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
               <button

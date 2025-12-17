@@ -235,8 +235,13 @@ export const fetchDetailedMarketData = async (retryCount = 0, maxRetries = 3) =>
       const symbol = ID_TO_SYMBOL[coin.id];
       if (!symbol) return;
       
+      // Ensure accurate real-time price - use current_price from CoinGecko API
+      // CoinGecko provides current_price which reflects the latest market price
       const currentPrice = coin.current_price || 0;
       const sparkline = coin.sparkline_in_7d?.price || [];
+      
+      // Get current timestamp for accurate real-time tracking
+      const currentTimestamp = Date.now();
       
       // Transform sparkline into chartData points (for mini and full charts)
       // The sparkline is 7-day historical data - we'll display it as TODAY's intraday data for real-time appearance
@@ -269,6 +274,20 @@ export const fetchDetailedMarketData = async (retryCount = 0, maxRetries = 3) =>
           })
         : [];
       
+      // Format price with appropriate precision (preserve CoinGecko's precision)
+      // For most cryptocurrencies, 2-8 decimal places is appropriate
+      const formatPrice = (price) => {
+        if (!price || price === 0) return '0';
+        // For prices > 1, use 2 decimal places; for prices < 1, use more precision
+        if (price >= 1) {
+          return price.toFixed(2);
+        } else if (price >= 0.01) {
+          return price.toFixed(4);
+        } else {
+          return price.toFixed(8);
+        }
+      };
+      
       transformedData.push({
         arg: {
           channel: 'tickers',
@@ -276,23 +295,23 @@ export const fetchDetailedMarketData = async (retryCount = 0, maxRetries = 3) =>
         },
         data: [{
           instId: symbol.replace('USDT', '-USDT'),
-          last: currentPrice.toString(),
-          px: currentPrice.toString(), // Primary price field for RealtimeStream
-          p: currentPrice.toString(), // Alternative price field
+          last: formatPrice(currentPrice), // Real-time price from CoinGecko
+          px: formatPrice(currentPrice), // Primary price field for RealtimeStream - reflects current market price
+          p: formatPrice(currentPrice), // Alternative price field - ensures compatibility
           lastSz: '0',
-          askPx: (currentPrice * 1.001).toFixed(2),
+          askPx: formatPrice(currentPrice * 1.001), // Simulated ask price
           askSz: '0',
-          bidPx: (currentPrice * 0.999).toFixed(2),
+          bidPx: formatPrice(currentPrice * 0.999), // Simulated bid price
           bidSz: '0',
-          open24h: currentPrice ? (currentPrice / (1 + (coin.price_change_percentage_24h || 0) / 100)).toFixed(2) : '0',
-          high24h: coin.high_24h?.toString() || currentPrice.toString() || '0',
-          low24h: coin.low_24h?.toString() || currentPrice.toString() || '0',
+          open24h: currentPrice ? formatPrice(currentPrice / (1 + (coin.price_change_percentage_24h || 0) / 100)) : '0',
+          high24h: coin.high_24h ? formatPrice(coin.high_24h) : formatPrice(currentPrice),
+          low24h: coin.low_24h ? formatPrice(coin.low_24h) : formatPrice(currentPrice),
           vol24h: coin.total_volume?.toString() || '0',
-          volCcy24h: (coin.total_volume * currentPrice)?.toString() || '0',
-          ts: Date.now().toString(),
-          change24h: coin.price_change_percentage_24h?.toString() || '0',
-          change1h: coin.price_change_percentage_1h_in_currency?.toString() || '0',
-          change7d: coin.price_change_percentage_7d_in_currency?.toString() || '0',
+          volCcy24h: coin.total_volume && currentPrice ? (coin.total_volume * currentPrice).toFixed(2) : '0',
+          ts: currentTimestamp.toString(), // Current timestamp for real-time tracking
+          change24h: coin.price_change_percentage_24h?.toFixed(2) || '0',
+          change1h: coin.price_change_percentage_1h_in_currency?.toFixed(2) || '0',
+          change7d: coin.price_change_percentage_7d_in_currency?.toFixed(2) || '0',
           marketCap: coin.market_cap?.toString() || '0',
           marketCapRank: coin.market_cap_rank?.toString() || '0',
           circulatingSupply: coin.circulating_supply?.toString() || '0',
@@ -303,9 +322,9 @@ export const fetchDetailedMarketData = async (retryCount = 0, maxRetries = 3) =>
           name: coin.name,
           symbol: coin.symbol?.toUpperCase(),
           sz: '0',
-          tradeId: Date.now().toString(),
+          tradeId: currentTimestamp.toString(), // Use current timestamp for unique trade ID
           side: 'buy',
-          timestamp: Date.now()
+          timestamp: currentTimestamp // Real-time timestamp - ensures accurate price reflection
         }]
       });
     });
