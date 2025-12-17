@@ -1,0 +1,150 @@
+.simple-flow-container {
+  width: 100%;
+  height: 100%;
+  overflow: hidden; /* Hide default scrollbars, we will implement drag-to-pan or custom scroll */
+  background-color: #f8fafc;
+  background-image: radial-gradient(#cbd5e1 1.5px, transparent 1.5px);
+  background-size: 20px 20px;
+  border-radius: 8px;
+  position: relative;
+  cursor: grab;
+}
+
+.simple-flow-container:active {
+  cursor: grabbing;
+}
+
+.simple-flow-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  width: 100%;
+  height: 100%;
+  will-change: transform;
+}
+
+.simple-flow-edges {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+  overflow: visible;
+}
+
+.flow-edge-path {
+  fill: none;
+  stroke: #b1b1b7;
+  stroke-width: 2;
+}
+
+.flow-edge-path-animated {
+  fill: none;
+  stroke: #2F80ED;
+  stroke-width: 2;
+  stroke-dasharray: 5;
+  animation: dashdraw 1s linear infinite;
+  opacity: 0.8;
+}
+
+@keyframes dashdraw {
+  from {
+    stroke-dashoffset: 10;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.flow-node {
+  position: absolute;
+  background: white;
+  z-index: 2;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  transition: box-shadow 0.2s, transform 0.2s;
+  border-radius: 8px; /* Ensure rounded corners match defaultNodeStyle */
+}
+
+.flow-node:hover {
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  transform: translateY(-2px);
+  z-index: 10;
+}
+
+/* Controls (Zoom) */
+.simple-flow-controls-panel {
+  position: absolute;
+  bottom: 20px;
+  left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 20;
+  background: white;
+  padding: 4px;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+  border: 1px solid #e2e8f0;
+}
+
+.simple-flow-control-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 18px;
+  font-weight: bold;
+  color: #475569;
+  transition: all 0.2s;
+}
+
+.simple-flow-control-btn:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+  border-color: #cbd5e1;
+}
+
+/* MiniMap */
+.simple-flow-minimap {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  width: 150px;
+  height: 100px;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+  z-index: 20;
+  overflow: hidden;
+}
+
+.simple-flow-minimap-content {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background-color: #f8fafc;
+}
+
+.simple-flow-minimap-node {
+  position: absolute;
+  background-color: #cbd5e1;
+  border-radius: 2px;
+}
+
+.simple-flow-minimap-viewport {
+  position: absolute;
+  border: 2px solid #3b82f6;
+  background-color: rgba(59, 130, 246, 0.1);
+  border-radius: 4px;
+  pointer-events: none; /* Let clicks pass through for now, or implement drag later */
+  transition: all 0.1s;
+}

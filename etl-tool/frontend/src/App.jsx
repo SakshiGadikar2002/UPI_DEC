@@ -11,9 +11,8 @@ import AuthForm from './components/AuthForm'
 import PipelineViewer from './components/PipelineViewer'
 import './App.css'
 
-// Root application component: handles auth, layout, and routing between sections.
 function App() {
-  const [activeSection, setActiveSection] = useState('files')
+  const [activeSection, setActiveSection] = useState(() => localStorage.getItem('etl-active-section') || 'files')
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [sectionData, setSectionData] = useState({
     files: null,
@@ -256,6 +255,16 @@ function App() {
     localStorage.removeItem('etl-auth-token')
   }
 
+  useEffect(() => {
+    if (activeSection) {
+      try {
+        localStorage.setItem('etl-active-section', activeSection)
+      } catch {}
+    }
+  }, [activeSection])
+
+  const shouldShowAuth = !user && (!token || !!authError)
+
   // Route to the active section component
   const renderActiveSection = () => {
     switch (activeSection) {
@@ -292,10 +301,10 @@ function App() {
   return (
     <ErrorBoundary>
       <div className="App">
-        {!user ? (
+        {shouldShowAuth ? (
           <div className="auth-screen">
             <div className="auth-card">
-              <h1 className="auth-title">Wisepipe</h1>
+              <h1 className="auth-title">arithpipe</h1>
               <p className="auth-subtitle">Log in or create an account to continue</p>
               <AuthForm
                 loading={authLoading}

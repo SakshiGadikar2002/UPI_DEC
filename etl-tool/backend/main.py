@@ -2,6 +2,8 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Uplo
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.exception_handlers import http_exception_handler
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any, Set
@@ -312,7 +314,7 @@ async def lifespan(app: FastAPI):
     await close_postgres_connection()
 
 
-app = FastAPI(title="Wisepipe API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="arithpipe API", version="1.0.0", lifespan=lifespan)
 
 # CORS middleware - allow all origins since we're serving from same port
 app.add_middleware(
@@ -374,12 +376,29 @@ def get_processed_dir_by_type(file_ext: str) -> Path:
         return PROCESSED_XLSX_DIR
     return PROCESSED_DIR
 
-# Mount static files (CSS, JS, images, etc.)
 if FRONTEND_DIST.exists():
     app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="assets")
     logger.info(f"Static files mounted from: {FRONTEND_DIST}")
 else:
     logger.warning(f"Frontend dist directory not found at: {FRONTEND_DIST}")
+
+@app.exception_handler(StarletteHTTPException)
+async def _spa_fallback_404(request: Request, exc: StarletteHTTPException):
+    if exc.status_code != 404:
+        return await http_exception_handler(request, exc)
+    path = request.url.path
+    method = request.method.upper()
+    if path.startswith("/api") or path.startswith("/docs") or path.startswith("/redoc") or path.startswith("/openapi.json"):
+        return await http_exception_handler(request, exc)
+    if method not in ("GET", "HEAD"):
+        return await http_exception_handler(request, exc)
+    file_candidate = (FRONTEND_DIST / path.lstrip("/"))
+    if file_candidate.exists() and file_candidate.is_file():
+        return FileResponse(str(file_candidate))
+    index_path = FRONTEND_DIST / "index.html"
+    if index_path.exists():
+        return FileResponse(str(index_path))
+    return await http_exception_handler(request, exc)
 
 # Initialize job manager
 job_manager = JobManager()
@@ -471,7 +490,7 @@ async def send_test_alert(request: Request, current_user=Depends(get_current_use
     recipient = current_user["email"]
     subject = "[TEST] Alert delivery check"
     body = (
-        "<p>This is a test alert from Wisepipe.</p>"
+        "<p>This is a test alert from arithpipe.</p>"
         "<p>If you received this, SMTP credentials are working.</p>"
     )
     success, error = notifier.send_email([recipient], subject, body, html=True)
@@ -1013,7 +1032,7 @@ async def root():
     index_path = FRONTEND_DIST / "index.html"
     if index_path.exists():
         return FileResponse(str(index_path))
-    return {"message": "Wisepipe API", "version": "1.0.0"}
+    return {"message": "arithpipe API", "version": "1.0.0"}
 
 
 @app.post("/api/jobs", response_model=JobStatusResponse)
@@ -3115,9 +3134,9 @@ if __name__ == "__main__":
             recipients_str = _os.getenv("ALERT_EMAIL_RECIPIENTS", "aishwarya.sakharkar@arithwise.com")
             recipients = [r.strip() for r in recipients_str.split(",") if r.strip()]
             notifier = EmailNotifier()
-            subject = "Wisepipe - Test Alert Email"
+            subject = "arithpipe - Test Alert Email"
             body = notifier.format_alert_email(
-                alert_message="Test: This is a test alert email from Wisepipe",
+                alert_message="Test: This is a test alert email from arithpipe",
                 alert_category="etl_system_alerts",
                 alert_reason="Connectivity and SMTP verification",
                 severity="warning",

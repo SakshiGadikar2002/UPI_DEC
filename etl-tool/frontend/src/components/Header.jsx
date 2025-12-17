@@ -55,7 +55,7 @@ function Header({ sidebarOpen, setIsOpen, history, onClearHistory, user, onLogou
             </svg>
           </button>
           <div className="header-logo">
-            <h1>Wisepipe</h1>
+            <h1>arithpipe</h1>
             <p>Data Extraction & Transformation</p>
           </div>
           <div className="header-right-actions">

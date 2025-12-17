@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import ReactFlow, { Background, Controls, MiniMap } from 'react-flow-renderer'
+import { useEffect, useMemo, useState, useRef } from 'react'
+import SimpleFlow from './SimpleFlow'
 import './PipelineViewer.css'
 
 const statusColors = {
@@ -72,9 +72,11 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
     }
   }, [apiBase, visible, apiId])
 
-  const fetchPipeline = async (apiIdToFetch) => {
+  const fetchPipeline = async (apiIdToFetch, opts = {}) => {
+    const silent = !!opts.silent
+    const mode = opts.mode || 'full'
     if (!apiIdToFetch) return
-    setLoading(true)
+    if (!silent) setLoading(true)
     setError('')
     try {
       let resp = await fetch(`${apiBase}/api/etl/pipeline/${apiIdToFetch}`)
@@ -85,15 +87,63 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
         throw new Error(`Pipeline endpoint returned ${resp.status}`)
       }
       const data = await resp.json()
-      console.log('Pipeline data received:', data)
-      console.log('Current run steps:', data?.current_run?.steps)
-      console.log('History steps:', data?.history?.[0]?.steps)
-      setPipelineData(data)
+      if (mode === 'full') {
+        setPipelineData(data)
+        const counts = (() => {
+          const out = {}
+          const ds = data?.data_stats || {}
+          const steps = data?.current_run?.steps || data?.history?.[0]?.steps || []
+          steps.forEach((step) => {
+            const stepName = step?.step_name || step?.stepName
+            if (!stepName) return
+            let recordCount = null
+            if (step?.details) {
+              try {
+                const details = typeof step.details === 'string' ? JSON.parse(step.details) : step.details
+                recordCount = details.records || details.items || details.count || null
+              } catch {}
+            }
+            if (recordCount === null || recordCount === undefined) {
+              if (stepName === 'extract' && ds.total_records > 0) recordCount = ds.total_records
+              else if (stepName === 'transform' && ds.total_items > 0) recordCount = ds.total_items
+              else if (stepName === 'load' && ds.total_records > 0) recordCount = ds.total_records
+            }
+            if (recordCount !== null && recordCount !== undefined) out[stepName] = recordCount
+          })
+          return out
+        })()
+        setRecordTargets(counts)
+      } else {
+        const counts = (() => {
+          const out = {}
+          const ds = data?.data_stats || {}
+          const steps = data?.current_run?.steps || data?.history?.[0]?.steps || []
+          steps.forEach((step) => {
+            const stepName = step?.step_name || step?.stepName
+            if (!stepName) return
+            let recordCount = null
+            if (step?.details) {
+              try {
+                const details = typeof step.details === 'string' ? JSON.parse(step.details) : step.details
+                recordCount = details.records || details.items || details.count || null
+              } catch {}
+            }
+            if (recordCount === null || recordCount === undefined) {
+              if (stepName === 'extract' && ds.total_records > 0) recordCount = ds.total_records
+              else if (stepName === 'transform' && ds.total_items > 0) recordCount = ds.total_items
+              else if (stepName === 'load' && ds.total_records > 0) recordCount = ds.total_records
+            }
+            if (recordCount !== null && recordCount !== undefined) out[stepName] = recordCount
+          })
+          return out
+        })()
+        setRecordTargets(counts)
+      }
     } catch (err) {
       console.error('Failed to fetch pipeline', err)
       setError(err.message || 'Unable to load pipeline')
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }
 
@@ -103,8 +153,16 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
       setPipelineData(null)
       return undefined
     }
-    fetchPipeline(selectedApi)
-    const interval = setInterval(() => fetchPipeline(selectedApi), 1800000) // Update every 30 minutes to reduce flickering
+    fetchPipeline(selectedApi, { mode: 'full' })
+    let tick = 0
+    const interval = setInterval(() => {
+      if (!visible || !selectedApi) return
+      fetchPipeline(selectedApi, { silent: true, mode: 'counts' })
+      if (tick % 15 === 0) {
+        fetchPipeline(selectedApi, { silent: true, mode: 'full' })
+      }
+      tick += 1
+    }, 2000)
     return () => clearInterval(interval)
   }, [selectedApi, visible])
 
@@ -156,8 +214,6 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
         if (recordCount === null || recordCount === undefined) {
           if (stepName === 'extract' && dataStats.total_records > 0) {
             recordCount = dataStats.total_records
-          } else if (stepName === 'clean' && dataStats.total_records > 0) {
-            recordCount = dataStats.total_records
           } else if (stepName === 'transform' && dataStats.total_items > 0) {
             recordCount = dataStats.total_items
           } else if (stepName === 'load' && dataStats.total_records > 0) {
@@ -194,6 +250,7 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
         .map((s) => s?.step_name || s?.stepName)
         .filter(Boolean)
         .filter((name) => name && name.trim().length > 0)
+        .filter((name) => name !== 'clean')
       
       console.log('StepSequence - Extracted step names:', stepNames)
       if (stepNames.length > 0) {
@@ -204,9 +261,62 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
     return fallbackSteps
   }, [pipelineData])
 
+  const activeStep = useMemo(() => {
+    const steps = pipelineData?.current_run?.steps || []
+    const running = steps.find((s) => (s?.status || '').toLowerCase() === 'running')
+    if (running) return running?.step_name || running?.stepName || null
+    const inProgress = steps.find((s) => s?.started_at && !s?.completed_at)
+    if (inProgress) return inProgress?.step_name || inProgress?.stepName || null
+    return null
+  }, [pipelineData])
+
+  const [animatedCounts, setAnimatedCounts] = useState({})
+  const [recordTargets, setRecordTargets] = useState({})
+  const targetsRef = useRef({})
+  const timersRef = useRef({})
+  useEffect(() => {
+    const next = { ...animatedCounts }
+    Object.keys(recordTargets || {}).forEach((key) => {
+      const target = typeof recordTargets[key] === 'number' ? recordTargets[key] : 0
+      const prevTarget = targetsRef.current[key]
+      const start = typeof animatedCounts[key] === 'number' ? animatedCounts[key] : 0
+      targetsRef.current[key] = target
+      if (prevTarget === target) return
+      if (timersRef.current[key]) {
+        cancelAnimationFrame(timersRef.current[key])
+        timersRef.current[key] = null
+      }
+      const startTime = performance.now()
+      const duration = 600
+      const animate = (now) => {
+        const t = Math.min(1, (now - startTime) / duration)
+        const eased = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t
+        const value = Math.round(start + (target - start) * eased)
+        next[key] = Math.max(0, value)
+        setAnimatedCounts({ ...next })
+        if (t < 1) {
+          timersRef.current[key] = requestAnimationFrame(animate)
+        } else {
+          next[key] = target
+          setAnimatedCounts({ ...next })
+          timersRef.current[key] = null
+        }
+      }
+      timersRef.current[key] = requestAnimationFrame(animate)
+    })
+    return () => {
+      Object.keys(timersRef.current).forEach((k) => {
+        if (timersRef.current[k]) {
+          cancelAnimationFrame(timersRef.current[k])
+          timersRef.current[k] = null
+        }
+      })
+    }
+  }, [recordTargets, animatedCounts])
+
   const nodes = useMemo(() => {
     const flowNodes = []
-    const positionList = (count) => Array.from({ length: count }, (_, idx) => ({ x: idx * 220, y: 120 }))
+    const positionList = (count) => Array.from({ length: count }, (_, idx) => ({ x: idx * 220 + 20, y: 80 }))
     const positions = positionList(stepSequence.length + 2)
 
     const destinationStatus = stepStatuses[stepSequence[stepSequence.length - 1]] || 'pending'
@@ -216,9 +326,9 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
 
     flowNodes.push({
       id: 'source',
-      data: { label: buildLabel('Source', 'success', pipelineData?.api?.source_url) },
+      data: { label: buildLabel('Source', 'pending', pipelineData?.api?.source_url) },
       position: positions[0],
-      style: { ...defaultNodeStyle, borderColor: statusColors.success, background: '#E0F2FE' },
+      style: { ...defaultNodeStyle, borderColor: statusColors.pending, background: '#F3F4F6' },
     })
 
     stepSequence.forEach((stepName, idx) => {
@@ -227,20 +337,26 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
         return // Skip if stepName is empty
       }
       const status = stepStatuses[stepName] || 'pending'
-      const recordCount = stepRecordCounts[stepName]
+      const recordCount = animatedCounts[stepName] ?? 0
       const displayName = stepName ? stepName.toUpperCase() : 'UNKNOWN'
       const labelElement = buildLabel(displayName, status, pipelineData?.api?.api_name, recordCount)
       console.log(`Creating node for step: ${stepName} with status: ${status}, recordCount: ${recordCount}, displayName: ${displayName}`, labelElement)
       
+      const isActive = activeStep && stepName === activeStep
+      const baseStyle = {
+        ...defaultNodeStyle,
+        borderColor: statusColors[status] || statusColors.pending,
+        background: `${statusColors[status] || statusColors.pending}20`,
+      }
+      const activeStyle = isActive
+        ? { ...baseStyle, borderColor: '#2563eb', background: '#DBEAFE' }
+        : baseStyle
+
       flowNodes.push({
         id: stepName || `step-${idx}`,
         data: { label: labelElement },
         position: positions[idx + 1],
-        style: {
-          ...defaultNodeStyle,
-          borderColor: statusColors[status] || statusColors.pending,
-          background: `${statusColors[status] || statusColors.pending}20`,
-        },
+        style: activeStyle,
       })
     })
 
@@ -257,7 +373,7 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
 
     console.log('Final nodes array:', flowNodes)
     return flowNodes
-  }, [pipelineData, stepStatuses, stepSequence, stepRecordCounts])
+  }, [pipelineData, stepStatuses, stepSequence, animatedCounts, activeStep])
 
   const edges = useMemo(() => {
     const flowEdges = []
@@ -385,18 +501,7 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
                 >
                   POP UP VIEW
                 </button>
-                <ReactFlow
-                  nodes={nodes}
-                  edges={edges}
-                  fitView
-                  nodesDraggable={false}
-                  nodesConnectable={false}
-                  elementsSelectable={false}
-                >
-                  <MiniMap pannable={false} zoomable={false} />
-                  <Controls />
-                  <Background gap={20} color="#f0f4ff" />
-                </ReactFlow>
+                <SimpleFlow nodes={nodes} edges={edges} />
               </div>
             </div>
             
@@ -416,18 +521,7 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
                   </div>
                   <div className="pipeline-fitview-modal-body">
                     <div style={{ width: '100%', height: '100%' }}>
-                      <ReactFlow
-                        nodes={nodes}
-                        edges={edges}
-                        fitView
-                        nodesDraggable={false}
-                        nodesConnectable={false}
-                        elementsSelectable={false}
-                      >
-                        <MiniMap pannable={false} zoomable={false} />
-                        <Controls />
-                        <Background gap={20} color="#f0f4ff" />
-                      </ReactFlow>
+                      <SimpleFlow nodes={nodes} edges={edges} />
                     </div>
                   </div>
                 </div>

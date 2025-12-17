@@ -32,8 +32,8 @@ def test_email():
     test_body_html = """
     <html>
         <body>
-            <h2>Wisepipe - Alert Test</h2>
-            <p>This is a test email from Wisepipe to verify SMTP functionality.</p>
+            <h2>arithpipe - Alert Test</h2>
+            <p>This is a test email from arithpipe to verify SMTP functionality.</p>
             <p><strong>If you received this message, the email alert system is working correctly!</strong></p>
             <p style="color: #666; font-size: 12px;">Sent at: """ + str(os.popen('echo %DATE% %TIME%').read().strip()) + """</p>
         </body>
