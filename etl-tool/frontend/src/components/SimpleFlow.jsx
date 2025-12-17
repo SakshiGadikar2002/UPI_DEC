@@ -236,7 +236,7 @@ const SimpleFlow = ({ nodes, edges }) => {
         {nodes.map(node => (
           <div 
             key={node.id} 
-            className="flow-node" 
+            className={`flow-node ${node.className || ''}`}
             style={{ 
               left: node.position.x, 
               top: node.position.y, 

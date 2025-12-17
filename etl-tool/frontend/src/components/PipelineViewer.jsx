@@ -21,14 +21,27 @@ const defaultNodeStyle = {
   width: 160,
 }
 
-const buildLabel = (title, status, tooltip, recordCount = null) => (
-  <div className="pipeline-node-label" title={tooltip || ''}>
-    <div className="pipeline-node-title">{title}</div>
-    <div className={`pipeline-node-status status-${status || 'pending'}`}>
-      {recordCount !== null && recordCount !== undefined ? `${recordCount} records` : (status || 'pending')}
+const buildLabel = (title, status, tooltip, recordCount = null, apiName = null) => {
+  const displayCount = recordCount !== null && recordCount !== undefined ? recordCount : 0
+  const hasCount = recordCount !== null && recordCount !== undefined
+  
+  return (
+    <div className="pipeline-node-label" title={tooltip || ''}>
+      <div className="pipeline-node-title">{title}</div>
+      <div className={`pipeline-node-status status-${status || 'pending'}`}>
+        {apiName ? (
+          <span className="pipeline-node-api-name">{apiName}</span>
+        ) : hasCount ? (
+          <span className="pipeline-node-record-count counter-animate" key={`count-${displayCount}`}>
+            {displayCount.toLocaleString()} {displayCount === 1 ? 'Record' : 'Records'}
+          </span>
+        ) : (
+          <span className="pipeline-node-status-text">{status || 'pending'}</span>
+        )}
+      </div>
     </div>
-  </div>
-)
+  )
+}
 
 function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
   const apiBase = import.meta.env.VITE_API_BASE || ''
@@ -38,6 +51,7 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
   const [error, setError] = useState('')
   const [options, setOptions] = useState([])
   const [showFitViewModal, setShowFitViewModal] = useState(false)
+  const [isTriggering, setIsTriggering] = useState(false)
 
   // When apiId is provided (from running connector), use it directly - no dropdown needed
   useEffect(() => {
@@ -72,72 +86,287 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
     }
   }, [apiBase, visible, apiId])
 
+  // Function to trigger/start the pipeline for an API
+  const triggerPipelineRun = async (apiIdToTrigger, showLoading = false) => {
+    if (!apiIdToTrigger) return false
+    if (showLoading) setIsTriggering(true)
+    try {
+      // Try to start the connector/pipeline
+      const startResp = await fetch(`${apiBase}/api/connectors/${apiIdToTrigger}/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      })
+      
+      if (startResp.ok) {
+        console.log(`[PipelineViewer] Successfully triggered pipeline for ${apiIdToTrigger}`)
+        // Wait a moment for the run to initialize, then refresh
+        setTimeout(() => {
+          fetchPipeline(apiIdToTrigger, { mode: 'full' })
+        }, 1000)
+        if (showLoading) setIsTriggering(false)
+        return true
+      } else {
+        // If connector start fails, try to trigger via job scheduler
+        const jobResp = await fetch(`${apiBase}/api/jobs/${apiIdToTrigger}/run`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        })
+        if (jobResp.ok) {
+          console.log(`[PipelineViewer] Successfully triggered job for ${apiIdToTrigger}`)
+          // Wait a moment for the run to initialize, then refresh
+          setTimeout(() => {
+            fetchPipeline(apiIdToTrigger, { mode: 'full' })
+          }, 1000)
+          if (showLoading) setIsTriggering(false)
+          return true
+        }
+      }
+      if (showLoading) setIsTriggering(false)
+      return false
+    } catch (err) {
+      console.warn(`[PipelineViewer] Could not trigger pipeline for ${apiIdToTrigger}:`, err)
+      if (showLoading) setIsTriggering(false)
+      return false
+    }
+  }
+
   const fetchPipeline = async (apiIdToFetch, opts = {}) => {
     const silent = !!opts.silent
     const mode = opts.mode || 'full'
+    const autoTrigger = !!opts.autoTrigger
     if (!apiIdToFetch) return
     if (!silent) setLoading(true)
     setError('')
     try {
-      let resp = await fetch(`${apiBase}/api/etl/pipeline/${apiIdToFetch}`)
+      // Add cache-busting timestamp to ensure fresh data on every request
+      const timestamp = Date.now()
+      let resp = await fetch(`${apiBase}/api/etl/pipeline/${apiIdToFetch}?t=${timestamp}`, {
+        cache: 'no-cache',
+        headers: {
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        }
+      })
       if (!resp.ok) {
-        resp = await fetch(`${apiBase}/api/pipeline/${apiIdToFetch}`)
+        resp = await fetch(`${apiBase}/api/pipeline/${apiIdToFetch}?t=${timestamp}`, {
+          cache: 'no-cache',
+          headers: {
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache'
+          }
+        })
       }
       if (!resp.ok) {
         throw new Error(`Pipeline endpoint returned ${resp.status}`)
       }
       const data = await resp.json()
+      
+      // If autoTrigger is enabled, ensure pipeline execution starts
+      // When "View Pipeline" is clicked, always trigger execution if no active run exists
+      if (autoTrigger && data?.api) {
+        const hasActiveRun = data?.current_run && 
+          (data.current_run.status === 'running' || data.current_run.status === 'in_progress')
+        const hasRecentRun = data?.history?.[0] && 
+          new Date(data.history[0].started_at) > new Date(Date.now() - 30000) // Run in last 30 seconds
+        
+        // Always trigger if no active run exists (even if recent run exists, start fresh)
+        // This ensures "View Pipeline" always shows live execution
+        if (!hasActiveRun) {
+          console.log('[PipelineViewer] No active run found, triggering new pipeline execution...')
+          triggerPipelineRun(apiIdToFetch, false).then((success) => {
+            if (success) {
+              // Wait a bit for the run to start, then fetch again
+              setTimeout(() => {
+                fetchPipeline(apiIdToFetch, { silent: true, mode: 'full' })
+              }, 1500)
+            }
+          })
+        } else {
+          console.log('[PipelineViewer] Active run already in progress, monitoring...')
+        }
+      }
+      
+      // Extract record counts from the response - prioritize step details for accurate counts
+      const extractCounts = (data) => {
+        const out = {}
+        const ds = data?.data_stats || {}
+        const steps = data?.current_run?.steps || data?.history?.[0]?.steps || []
+        
+        console.log('[ExtractCounts] 🔍 Starting extraction - data_stats:', ds)
+        console.log('[ExtractCounts] 🔍 Steps available:', steps.map(s => ({
+          name: s?.step_name || s?.stepName,
+          status: s?.status,
+          hasDetails: !!s?.details
+        })))
+        
+        // If we have steps, extract counts from them
+        if (steps.length > 0) {
+          steps.forEach((step) => {
+            const stepName = step?.step_name || step?.stepName
+            if (!stepName) return
+            
+            // Skip source and destination - we only want extract, transform, load
+            if (stepName === 'source' || stepName === 'destination') return
+            
+            let recordCount = null
+            let source = 'none'
+            
+            // Priority 1: Try to extract count from step details first (most accurate)
+            if (step?.details) {
+              try {
+                const details = typeof step.details === 'string' ? JSON.parse(step.details) : step.details
+                recordCount = details.records || details.items || details.count || details.record_count || 
+                             details.processed || details.total_processed || null
+                if (recordCount !== null) source = 'step_details'
+                console.log(`[ExtractCounts] Step ${stepName} details:`, details, '-> count:', recordCount)
+              } catch (e) {
+                console.warn(`[ExtractCounts] Failed to parse details for ${stepName}:`, e)
+              }
+            }
+            
+            // Priority 2: Check if step has a direct count property
+            if ((recordCount === null || recordCount === undefined) && step.record_count !== undefined) {
+              recordCount = step.record_count
+              source = 'step.record_count'
+            }
+            
+            // Priority 3: Fallback to data_stats for specific steps
+            // CRITICAL: Use data_stats even if it's 0 - this is where real-time updates come from!
+            if (recordCount === null || recordCount === undefined) {
+              if (stepName === 'extract' && ds.total_records !== undefined && ds.total_records !== null) {
+                recordCount = ds.total_records
+                source = 'data_stats.total_records'
+              } else if (stepName === 'transform' && ds.total_items !== undefined && ds.total_items !== null) {
+                recordCount = ds.total_items
+                source = 'data_stats.total_items'
+              } else if (stepName === 'load' && ds.total_records !== undefined && ds.total_records !== null) {
+                recordCount = ds.total_records
+                source = 'data_stats.total_records'
+              }
+            }
+            
+            // Always include count if we found one (including 0)
+            if (recordCount !== null && recordCount !== undefined) {
+              const numCount = Number(recordCount)
+              if (!isNaN(numCount)) {
+                out[stepName] = Math.max(0, numCount) // Ensure non-negative
+                console.log(`[ExtractCounts] ✅ ${stepName}: ${out[stepName]} (from ${source})`)
+              } else {
+                console.warn(`[ExtractCounts] ⚠️ ${stepName}: Invalid number ${recordCount}`)
+              }
+            } else {
+              console.log(`[ExtractCounts] ❌ ${stepName}: No count found`)
+            }
+          })
+        } else {
+          // No steps available - extract directly from data_stats (for non-real-time APIs)
+          // This ensures background updates are reflected even without an active run
+          console.log('[ExtractCounts] No steps found, extracting from data_stats only')
+          if (ds.total_records !== undefined && ds.total_records !== null) {
+            // For non-real-time APIs, total_records might represent all steps
+            out['extract'] = Math.max(0, Number(ds.total_records))
+            out['load'] = Math.max(0, Number(ds.total_records))
+            console.log(`[ExtractCounts] ✅ extract/load: ${out['extract']} (from data_stats.total_records)`)
+          }
+          if (ds.total_items !== undefined && ds.total_items !== null) {
+            out['transform'] = Math.max(0, Number(ds.total_items))
+            console.log(`[ExtractCounts] ✅ transform: ${out['transform']} (from data_stats.total_items)`)
+          }
+        }
+        
+        console.log('[ExtractCounts] 📊 Final extracted counts:', out)
+        return out
+      }
+      
       if (mode === 'full') {
         setPipelineData(data)
-        const counts = (() => {
-          const out = {}
-          const ds = data?.data_stats || {}
-          const steps = data?.current_run?.steps || data?.history?.[0]?.steps || []
-          steps.forEach((step) => {
-            const stepName = step?.step_name || step?.stepName
-            if (!stepName) return
-            let recordCount = null
-            if (step?.details) {
-              try {
-                const details = typeof step.details === 'string' ? JSON.parse(step.details) : step.details
-                recordCount = details.records || details.items || details.count || null
-              } catch {}
-            }
-            if (recordCount === null || recordCount === undefined) {
-              if (stepName === 'extract' && ds.total_records > 0) recordCount = ds.total_records
-              else if (stepName === 'transform' && ds.total_items > 0) recordCount = ds.total_items
-              else if (stepName === 'load' && ds.total_records > 0) recordCount = ds.total_records
-            }
-            if (recordCount !== null && recordCount !== undefined) out[stepName] = recordCount
-          })
-          return out
-        })()
-        setRecordTargets(counts)
+        const counts = extractCounts(data)
+        console.log('[PipelineViewer] Full mode - extracted counts:', counts)
+        
+        // Always update record targets in full mode to ensure counts are current
+        setRecordTargets(prevTargets => {
+          // Merge with previous to preserve any ongoing animations
+          const merged = { ...prevTargets, ...counts }
+          console.log('[PipelineViewer] Full mode - setting record targets:', merged)
+          return merged
+        })
       } else {
-        const counts = (() => {
-          const out = {}
-          const ds = data?.data_stats || {}
-          const steps = data?.current_run?.steps || data?.history?.[0]?.steps || []
-          steps.forEach((step) => {
-            const stepName = step?.step_name || step?.stepName
-            if (!stepName) return
-            let recordCount = null
-            if (step?.details) {
-              try {
-                const details = typeof step.details === 'string' ? JSON.parse(step.details) : step.details
-                recordCount = details.records || details.items || details.count || null
-              } catch {}
+        // For 'counts' mode, merge the new step data into existing pipelineData
+        // so that stepRecordCounts can recalculate with fresh data
+        setPipelineData((prevData) => {
+          if (!prevData) return data
+          
+          // Always update data_stats first to ensure latest counts are available
+          const newDataStats = data.data_stats || {}
+          const prevDataStats = prevData.data_stats || {}
+          
+          // Check if data_stats actually changed (for non-real-time APIs that update in background)
+          const dataStatsChanged = JSON.stringify(newDataStats) !== JSON.stringify(prevDataStats)
+          
+          if (dataStatsChanged) {
+            console.log('[PipelineViewer] 🔄 data_stats changed:', {
+              previous: prevDataStats,
+              new: newDataStats
+            })
+          }
+          
+          // Merge the current_run steps if they exist
+          if (data?.current_run?.steps) {
+            const merged = {
+              ...prevData,
+              current_run: {
+                ...prevData.current_run,
+                ...data.current_run,
+                steps: data.current_run.steps, // Use the new steps data
+              },
+              data_stats: newDataStats, // Always use new data_stats
             }
-            if (recordCount === null || recordCount === undefined) {
-              if (stepName === 'extract' && ds.total_records > 0) recordCount = ds.total_records
-              else if (stepName === 'transform' && ds.total_items > 0) recordCount = ds.total_items
-              else if (stepName === 'load' && ds.total_records > 0) recordCount = ds.total_records
+            console.log('[PipelineViewer] Counts mode - merged pipelineData:', {
+              steps: merged.current_run?.steps,
+              data_stats: merged.data_stats,
+              dataStatsChanged
+            })
+            return merged
+          }
+          
+          // If no current_run, update data_stats at least (important for non-real-time APIs)
+          // This ensures background updates are reflected even without an active run
+          return {
+            ...prevData,
+            data_stats: newDataStats, // Always use new data_stats
+          }
+        })
+        
+        const counts = extractCounts(data)
+        console.log('[PipelineViewer] Counts mode - extracted counts:', counts)
+        
+        // ALWAYS update recordTargets to ensure UI reflects latest counts from backend
+        // This is critical for real-time updates
+        setRecordTargets(prevTargets => {
+          const hasChanges = Object.keys(counts).some(
+            key => counts[key] !== prevTargets[key]
+          ) || Object.keys(prevTargets).some(
+            key => !counts.hasOwnProperty(key) && prevTargets[key] !== undefined
+          )
+          
+          // Always merge new counts - this ensures backend updates are reflected
+          const updated = { ...prevTargets, ...counts }
+          
+          // Log changes for debugging
+          Object.keys(counts).forEach(key => {
+            if (counts[key] !== prevTargets[key]) {
+              console.log(`[PipelineViewer] 🔄 COUNT CHANGED: ${key} ${prevTargets[key]} -> ${counts[key]}`)
             }
-            if (recordCount !== null && recordCount !== undefined) out[stepName] = recordCount
           })
-          return out
-        })()
-        setRecordTargets(counts)
+          
+          console.log('[PipelineViewer] Counts mode - updating record targets:', {
+            previous: prevTargets,
+            new: counts,
+            merged: updated,
+            hasChanges
+          })
+          return updated
+        })
       }
     } catch (err) {
       console.error('Failed to fetch pipeline', err)
@@ -153,90 +382,59 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
       setPipelineData(null)
       return undefined
     }
-    fetchPipeline(selectedApi, { mode: 'full' })
+    
+    // When "View Pipeline" is clicked, immediately trigger pipeline execution
+    // This ensures the UI shows live execution state from the start
+    const initialFetch = async () => {
+      console.log('[PipelineViewer] Initial fetch - triggering pipeline execution for:', selectedApi)
+      // Always trigger execution when viewer opens to show live state
+      await fetchPipeline(selectedApi, { mode: 'full', autoTrigger: true })
+    }
+    initialFetch()
+    
     let tick = 0
+    console.log('[PipelineViewer] Starting real-time polling for API:', selectedApi)
+    
+    // Use 500ms polling interval for more responsive real-time updates
+    // This ensures UI stays synchronized with backend execution state
     const interval = setInterval(() => {
-      if (!visible || !selectedApi) return
-      fetchPipeline(selectedApi, { silent: true, mode: 'counts' })
-      if (tick % 15 === 0) {
+      if (!visible || !selectedApi) {
+        console.log('[PipelineViewer] Skipping poll - visible:', visible, 'selectedApi:', selectedApi)
+        return
+      }
+      
+      tick += 1
+      
+      // Fetch counts every 500ms for real-time counter updates
+      // This ensures Extract, Transform, and Load counts update smoothly as records are processed
+      fetchPipeline(selectedApi, { silent: true, mode: 'counts' }).then(() => {
+        // Only log every 10 ticks to reduce console noise
+        if (tick % 10 === 0) {
+          console.log(`[PipelineViewer] Real-time polling active - tick ${tick}`)
+        }
+      }).catch(err => {
+        console.error(`[PipelineViewer] Error fetching counts at tick ${tick}:`, err)
+      })
+      
+      // Fetch full data every 2 seconds (every 4 ticks at 500ms interval) to get complete state
+      // This includes step statuses, run status, and all metadata
+      if (tick % 4 === 0) {
         fetchPipeline(selectedApi, { silent: true, mode: 'full' })
       }
-      tick += 1
-    }, 2000)
-    return () => clearInterval(interval)
-  }, [selectedApi, visible])
-
-  const stepStatuses = useMemo(() => {
-    const statuses = {}
-    // Get steps from current run, or fallback to latest history run if no current run
-    const steps = pipelineData?.current_run?.steps || 
-                  pipelineData?.history?.[0]?.steps || 
-                  []
-    console.log('StepStatuses - Processing steps:', steps)
-    steps.forEach((step) => {
-      // Handle both step_name and stepName (camelCase) field names
-      const stepName = step?.step_name || step?.stepName
-      if (step && stepName) {
-        statuses[stepName] = step.status || 'pending'
-        console.log(`StepStatuses - Added: ${stepName} = ${statuses[stepName]}`)
-      } else {
-        console.warn('StepStatuses - Skipping invalid step:', step)
-      }
-    })
-    console.log('StepStatuses - Final statuses:', statuses)
-    return statuses
-  }, [pipelineData])
-
-  const stepRecordCounts = useMemo(() => {
-    const counts = {}
-    const dataStats = pipelineData?.data_stats || {}
-    // Get steps from current run, or fallback to latest history run if no current run
-    const steps = pipelineData?.current_run?.steps || 
-                  pipelineData?.history?.[0]?.steps || 
-                  []
+    }, 500) // Poll every 500ms for real-time synchronization with backend
     
-    steps.forEach((step) => {
-      const stepName = step?.step_name || step?.stepName
-      if (step && stepName) {
-        let recordCount = null
-        
-        // Try to extract count from step details
-        if (step.details) {
-          try {
-            const details = typeof step.details === 'string' ? JSON.parse(step.details) : step.details
-            recordCount = details.records || details.items || details.count || null
-          } catch (e) {
-            // Keep null if parsing fails
-          }
-        }
-        
-        // Fallback to data_stats for specific steps
-        if (recordCount === null || recordCount === undefined) {
-          if (stepName === 'extract' && dataStats.total_records > 0) {
-            recordCount = dataStats.total_records
-          } else if (stepName === 'transform' && dataStats.total_items > 0) {
-            recordCount = dataStats.total_items
-          } else if (stepName === 'load' && dataStats.total_records > 0) {
-            recordCount = dataStats.total_records
-          }
-        }
-        
-        counts[stepName] = recordCount
-      }
-    })
-    
-    return counts
-  }, [pipelineData])
+    return () => {
+      console.log('[PipelineViewer] Clearing polling interval')
+      clearInterval(interval)
+    }
+  }, [selectedApi, visible, apiBase])
 
+  // Compute step sequence first (needed by stepStatuses)
   const stepSequence = useMemo(() => {
     // Get steps from current run, or fallback to latest history run if no current run
     const steps = pipelineData?.current_run?.steps || 
                   pipelineData?.history?.[0]?.steps || 
                   []
-    
-    console.log('StepSequence - Raw steps from pipelineData:', steps)
-    console.log('StepSequence - Current run:', pipelineData?.current_run)
-    console.log('StepSequence - History[0]:', pipelineData?.history?.[0])
     
     if (steps && Array.isArray(steps) && steps.length > 0) {
       // Sort by step_order if available, otherwise maintain order
@@ -252,58 +450,287 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
         .filter((name) => name && name.trim().length > 0)
         .filter((name) => name !== 'clean')
       
-      console.log('StepSequence - Extracted step names:', stepNames)
       if (stepNames.length > 0) {
         return stepNames
       }
     }
-    console.log('StepSequence - No valid steps found, using fallback:', fallbackSteps)
     return fallbackSteps
   }, [pipelineData])
 
+  const stepStatuses = useMemo(() => {
+    const statuses = {}
+    // Get steps from current run (prioritize active run), or fallback to latest history run
+    const steps = pipelineData?.current_run?.steps || 
+                  pipelineData?.history?.[0]?.steps || 
+                  []
+    
+    // Normalize status values from backend to match our status colors
+    const normalizeStatus = (status) => {
+      if (!status) return 'pending'
+      const normalized = status.toLowerCase()
+      // Map various backend status values to our standard statuses
+      if (normalized === 'running' || normalized === 'in_progress' || normalized === 'in-progress') {
+        return 'running'
+      }
+      if (normalized === 'success' || normalized === 'completed' || normalized === 'done') {
+        return 'success'
+      }
+      if (normalized === 'failure' || normalized === 'failed' || normalized === 'error') {
+        return 'failure'
+      }
+      return normalized || 'pending'
+    }
+    
+    steps.forEach((step) => {
+      // Handle both step_name and stepName (camelCase) field names
+      const stepName = step?.step_name || step?.stepName
+      if (step && stepName) {
+        // Use normalized status to ensure consistent UI representation
+        statuses[stepName] = normalizeStatus(step.status)
+      } else {
+        console.warn('StepStatuses - Skipping invalid step:', step)
+      }
+    })
+    
+    // For steps in sequence that don't have status yet, mark as pending
+    // This ensures upcoming steps show as pending
+    stepSequence.forEach((stepName) => {
+      if (!statuses.hasOwnProperty(stepName)) {
+        statuses[stepName] = 'pending'
+      }
+    })
+    
+    return statuses
+  }, [pipelineData, stepSequence])
+
+  const stepRecordCounts = useMemo(() => {
+    const counts = {}
+    const dataStats = pipelineData?.data_stats || {}
+    // Get steps from current run, or fallback to latest history run if no current run
+    const steps = pipelineData?.current_run?.steps || 
+                  pipelineData?.history?.[0]?.steps || 
+                  []
+    
+    steps.forEach((step) => {
+      const stepName = step?.step_name || step?.stepName
+      if (step && stepName) {
+        let recordCount = null
+        
+        // Try to extract count from step details first (most reliable)
+        if (step.details) {
+          try {
+            const details = typeof step.details === 'string' ? JSON.parse(step.details) : step.details
+            recordCount = details.records || details.items || details.count || details.record_count || null
+          } catch (e) {
+            // Keep null if parsing fails
+          }
+        }
+        
+        // Check if step has a direct record_count property
+        if ((recordCount === null || recordCount === undefined) && step.record_count !== undefined) {
+          recordCount = step.record_count
+        }
+        
+        // Fallback to data_stats for specific steps
+        if (recordCount === null || recordCount === undefined) {
+          if (stepName === 'extract' && dataStats.total_records > 0) {
+            recordCount = dataStats.total_records
+          } else if (stepName === 'transform' && dataStats.total_items > 0) {
+            recordCount = dataStats.total_items
+          } else if (stepName === 'load' && dataStats.total_records > 0) {
+            recordCount = dataStats.total_records
+          }
+        }
+        
+        // Include count even if it's 0 (0 is a valid count, not missing data)
+        if (recordCount !== null && recordCount !== undefined) {
+          counts[stepName] = Number(recordCount) || 0
+        }
+      }
+    })
+    
+    return counts
+  }, [pipelineData])
+
   const activeStep = useMemo(() => {
-    const steps = pipelineData?.current_run?.steps || []
-    const running = steps.find((s) => (s?.status || '').toLowerCase() === 'running')
-    if (running) return running?.step_name || running?.stepName || null
-    const inProgress = steps.find((s) => s?.started_at && !s?.completed_at)
-    if (inProgress) return inProgress?.step_name || inProgress?.stepName || null
+    if (!pipelineData?.current_run) {
+      console.log('[ActiveStep] No current_run found')
+      return null
+    }
+    
+    const steps = pipelineData.current_run.steps || []
+    const runStatus = pipelineData.current_run.status
+    
+    console.log('[ActiveStep] Checking steps:', {
+      runStatus,
+      stepsCount: steps.length,
+      steps: steps.map(s => ({
+        name: s?.step_name || s?.stepName,
+        status: s?.status,
+        started: s?.started_at,
+        completed: s?.completed_at
+      }))
+    })
+    
+    // First, look for a step with status 'running'
+    const running = steps.find((s) => {
+      const status = (s?.status || '').toLowerCase()
+      return status === 'running' || status === 'in_progress'
+    })
+    if (running) {
+      const stepName = running?.step_name || running?.stepName
+      if (stepName) {
+        console.log('[ActiveStep] Found running step:', stepName)
+        return stepName
+      }
+    }
+    
+    // Second, look for a step that has started but not completed
+    const inProgress = steps.find((s) => {
+      const hasStarted = s?.started_at && s.started_at !== null
+      const notCompleted = !s?.completed_at || s.completed_at === null
+      return hasStarted && notCompleted
+    })
+    if (inProgress) {
+      const stepName = inProgress?.step_name || inProgress?.stepName
+      if (stepName) {
+        console.log('[ActiveStep] Found in-progress step:', stepName)
+        return stepName
+      }
+    }
+    
+    // If pipeline is running but no step is marked as running, 
+    // find the first step that hasn't completed yet
+    if (runStatus === 'running' || runStatus === 'in_progress') {
+      const pendingStep = steps.find((s) => {
+        const stepName = s?.step_name || s?.stepName
+        if (!stepName) return false
+        const notCompleted = !s?.completed_at || s.completed_at === null
+        return notCompleted
+      })
+      if (pendingStep) {
+        const stepName = pendingStep?.step_name || pendingStep?.stepName
+        if (stepName) {
+          console.log('[ActiveStep] Found pending step (first incomplete):', stepName)
+          return stepName
+        }
+      }
+    }
+    
+    console.log('[ActiveStep] No active step found')
     return null
   }, [pipelineData])
 
   const [animatedCounts, setAnimatedCounts] = useState({})
   const [recordTargets, setRecordTargets] = useState({})
+  const [renderTick, setRenderTick] = useState(0)
   const targetsRef = useRef({})
   const timersRef = useRef({})
+  const currentRunIdRef = useRef(null)
+  
+  // Reset counts to 0 when a new pipeline run starts
   useEffect(() => {
-    const next = { ...animatedCounts }
-    Object.keys(recordTargets || {}).forEach((key) => {
+    const currentRunId = pipelineData?.current_run?.run_id || pipelineData?.current_run?.id
+    if (currentRunId && currentRunId !== currentRunIdRef.current) {
+      // New run detected - reset all counts to 0
+      currentRunIdRef.current = currentRunId
+      const resetCounts = {}
+      stepSequence.forEach((stepName) => {
+        resetCounts[stepName] = 0
+      })
+      setAnimatedCounts(resetCounts)
+      setRecordTargets({})
+      targetsRef.current = {}
+      // Cancel any ongoing animations
+      Object.keys(timersRef.current).forEach((k) => {
+        if (timersRef.current[k]) {
+          cancelAnimationFrame(timersRef.current[k])
+          timersRef.current[k] = null
+        }
+      })
+    }
+  }, [pipelineData?.current_run?.run_id, pipelineData?.current_run?.id, stepSequence])
+  
+  useEffect(() => {
+    if (!recordTargets || Object.keys(recordTargets).length === 0) {
+      // If no targets but we have animated counts, keep them
+      return
+    }
+    
+    console.log('[Animation] Processing recordTargets:', recordTargets)
+    console.log('[Animation] Current animatedCounts:', animatedCounts)
+    
+    Object.keys(recordTargets).forEach((key) => {
       const target = typeof recordTargets[key] === 'number' ? recordTargets[key] : 0
       const prevTarget = targetsRef.current[key]
-      const start = typeof animatedCounts[key] === 'number' ? animatedCounts[key] : 0
-      targetsRef.current[key] = target
-      if (prevTarget === target) return
-      if (timersRef.current[key]) {
-        cancelAnimationFrame(timersRef.current[key])
-        timersRef.current[key] = null
-      }
-      const startTime = performance.now()
-      const duration = 600
-      const animate = (now) => {
-        const t = Math.min(1, (now - startTime) / duration)
-        const eased = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t
-        const value = Math.round(start + (target - start) * eased)
-        next[key] = Math.max(0, value)
-        setAnimatedCounts({ ...next })
-        if (t < 1) {
-          timersRef.current[key] = requestAnimationFrame(animate)
-        } else {
-          next[key] = target
-          setAnimatedCounts({ ...next })
+      const currentValue = typeof animatedCounts[key] === 'number' ? animatedCounts[key] : 0
+      
+      // ALWAYS update if target is different from previous target OR current animated value
+      // This ensures even small increments are visible
+      if (prevTarget !== target || currentValue !== target) {
+        console.log(`[Animation] Updating ${key}: ${currentValue} -> ${target} (prevTarget: ${prevTarget})`)
+        
+        // Update target reference immediately
+        targetsRef.current[key] = target
+        
+        // Cancel any existing animation for this key
+        if (timersRef.current[key]) {
+          cancelAnimationFrame(timersRef.current[key])
           timersRef.current[key] = null
         }
+        
+        const start = currentValue
+        const startTime = performance.now()
+        
+        // For very small changes (1-2 records), make animation very fast
+        const diff = Math.abs(target - start)
+        const duration = diff === 0 ? 0 : Math.max(100, Math.min(400, diff * 8))
+        
+        if (duration === 0 || diff === 0) {
+          // No animation needed, update immediately
+          setAnimatedCounts(prev => {
+            const updated = { ...prev, [key]: target }
+            console.log(`[Animation] Immediate update for ${key}:`, updated)
+            return updated
+          })
+          return
+        }
+        
+        const animate = (now) => {
+          const elapsed = now - startTime
+          const t = Math.min(1, elapsed / duration)
+          
+          // Smooth easing function for natural counter feel
+          const eased = t < 0.5 
+            ? 2 * t * t 
+            : -1 + (4 - 2 * t) * t
+          
+          const value = Math.round(start + (target - start) * eased)
+          
+          setAnimatedCounts(prev => {
+            const updated = { ...prev, [key]: Math.max(0, value) }
+            return updated
+          })
+          
+          if (t < 1) {
+            timersRef.current[key] = requestAnimationFrame(animate)
+          } else {
+            // Ensure we end exactly at target
+            setAnimatedCounts(prev => {
+              const final = { ...prev, [key]: target }
+              console.log(`[Animation] Completed for ${key}:`, final)
+              // Force a re-render by updating renderTick
+              setRenderTick(prev => prev + 1)
+              return final
+            })
+            timersRef.current[key] = null
+          }
+        }
+        
+        timersRef.current[key] = requestAnimationFrame(animate)
       }
-      timersRef.current[key] = requestAnimationFrame(animate)
     })
+    
     return () => {
       Object.keys(timersRef.current).forEach((k) => {
         if (timersRef.current[k]) {
@@ -312,7 +739,9 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
         }
       })
     }
-  }, [recordTargets, animatedCounts])
+  }, [recordTargets])
+
+  const selectedMeta = options.find((a) => a.id === selectedApi)
 
   const nodes = useMemo(() => {
     const flowNodes = []
@@ -320,15 +749,43 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
     const positions = positionList(stepSequence.length + 2)
 
     const destinationStatus = stepStatuses[stepSequence[stepSequence.length - 1]] || 'pending'
+    const dataStats = pipelineData?.data_stats || {}
+    
+    // Get source record count (from first step or data_stats) - use animated count for smooth counter
+    const sourceRecordCount = stepSequence.length > 0 
+      ? (animatedCounts[stepSequence[0]] ?? stepRecordCounts[stepSequence[0]] ?? null)
+      : (pipelineData?.data_stats?.total_records ?? null)
+    
+    // Get destination record count (from last step or data_stats) - use animated count for smooth counter
+    const destinationRecordCount = stepSequence.length > 0
+      ? (animatedCounts[stepSequence[stepSequence.length - 1]] ?? stepRecordCounts[stepSequence[stepSequence.length - 1]] ?? null)
+      : (pipelineData?.data_stats?.total_records ?? null)
 
     console.log('Building nodes - stepSequence:', stepSequence)
     console.log('Building nodes - stepStatuses:', stepStatuses)
 
+    // Source node - show API name (prioritize API name, fallback to record count if no API name)
+    const apiName = pipelineData?.api?.api_name || selectedMeta?.name || null
+    // Source should never be highlighted as active - only actual pipeline steps can be active
+    const isSourceActive = false
+    // Only show record count in Source if API name is not available
+    const sourceDisplayCount = apiName ? null : sourceRecordCount
+    
     flowNodes.push({
       id: 'source',
-      data: { label: buildLabel('Source', 'pending', pipelineData?.api?.source_url) },
+      data: { 
+        label: buildLabel('Source', 'pending', pipelineData?.api?.source_url, sourceDisplayCount, apiName),
+        apiName: apiName 
+      },
       position: positions[0],
-      style: { ...defaultNodeStyle, borderColor: statusColors.pending, background: '#F3F4F6' },
+      style: { 
+        ...defaultNodeStyle, 
+        borderColor: isSourceActive ? '#2563eb' : statusColors.pending, 
+        background: isSourceActive ? '#DBEAFE' : '#F3F4F6',
+        boxShadow: isSourceActive ? '0 0 12px rgba(37, 99, 235, 0.5)' : 'none',
+        transition: 'all 0.3s ease',
+      },
+      className: isSourceActive ? 'pipeline-node-active' : '',
     })
 
     stepSequence.forEach((stepName, idx) => {
@@ -337,19 +794,73 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
         return // Skip if stepName is empty
       }
       const status = stepStatuses[stepName] || 'pending'
-      const recordCount = animatedCounts[stepName] ?? 0
+      
+      // Get record count using the same logic as step timeline for consistency
+      // First try to get from step details (most accurate)
+      const stepInfo = pipelineData?.current_run?.steps?.find((s) => (s?.step_name || s?.stepName) === stepName) ||
+                      pipelineData?.history?.[0]?.steps?.find((s) => (s?.step_name || s?.stepName) === stepName) ||
+                      null
+      
+      let recordCount = null
+      if (stepInfo?.details) {
+        try {
+          const details = typeof stepInfo.details === 'string' ? JSON.parse(stepInfo.details) : stepInfo.details
+          recordCount = details.records || details.items || details.count || details.record_count || null
+        } catch (e) {
+          // Keep null if parsing fails
+        }
+      }
+      
+      // Fallback to data_stats (same as step timeline)
+      // CRITICAL: Use data_stats even if it's 0 - this is where real-time updates come from!
+      if (recordCount === null || recordCount === undefined) {
+        if (stepName === 'extract' && dataStats.total_records !== undefined && dataStats.total_records !== null) {
+          recordCount = dataStats.total_records
+        } else if (stepName === 'transform' && dataStats.total_items !== undefined && dataStats.total_items !== null) {
+          recordCount = dataStats.total_items
+        } else if (stepName === 'load' && dataStats.total_records !== undefined && dataStats.total_records !== null) {
+          recordCount = dataStats.total_records
+        }
+      }
+      
+      // Use animated count if available for smooth counter, otherwise use the extracted count
+      // Always prefer animatedCounts for real-time updates
+      const finalCount = animatedCounts[stepName] !== undefined 
+        ? animatedCounts[stepName] 
+        : (recordCount !== null && recordCount !== undefined ? recordCount : 0)
+      
+      // Log for debugging (only when count changes to avoid spam)
+      if (finalCount > 0) {
+        console.log(`[Nodes] Step ${stepName}: animatedCount=${animatedCounts[stepName]}, recordCount=${recordCount}, finalCount=${finalCount}`)
+      }
+      
       const displayName = stepName ? stepName.toUpperCase() : 'UNKNOWN'
-      const labelElement = buildLabel(displayName, status, pipelineData?.api?.api_name, recordCount)
-      console.log(`Creating node for step: ${stepName} with status: ${status}, recordCount: ${recordCount}, displayName: ${displayName}`, labelElement)
+      // Use finalCount as key to force re-render when count changes
+      const labelElement = buildLabel(displayName, status, pipelineData?.api?.api_name, finalCount)
       
       const isActive = activeStep && stepName === activeStep
+      if (isActive) {
+        console.log(`[Active Step] Highlighting step: ${stepName}`, {
+          activeStep,
+          stepName,
+          status,
+          recordCount: finalCount
+        })
+      }
       const baseStyle = {
         ...defaultNodeStyle,
         borderColor: statusColors[status] || statusColors.pending,
         background: `${statusColors[status] || statusColors.pending}20`,
       }
       const activeStyle = isActive
-        ? { ...baseStyle, borderColor: '#2563eb', background: '#DBEAFE' }
+        ? { 
+            ...baseStyle, 
+            borderColor: '#2563eb', 
+            background: '#DBEAFE',
+            boxShadow: '0 0 12px rgba(37, 99, 235, 0.5)',
+            borderWidth: 3,
+            transition: 'all 0.3s ease',
+          }
         : baseStyle
 
       flowNodes.push({
@@ -357,23 +868,31 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
         data: { label: labelElement },
         position: positions[idx + 1],
         style: activeStyle,
+        className: isActive ? 'pipeline-node-active' : '',
       })
     })
 
+    // Destination node - show record count
+    // Destination should never be highlighted as active - only actual pipeline steps can be active
+    const isDestinationActive = false
+    
     flowNodes.push({
       id: 'destination',
-      data: { label: buildLabel('Destination', destinationStatus, pipelineData?.api?.destination) },
+      data: { label: buildLabel('Destination', destinationStatus, pipelineData?.api?.destination, destinationRecordCount) },
       position: positions[positions.length - 1],
       style: {
         ...defaultNodeStyle,
-        borderColor: statusColors[destinationStatus] || statusColors.pending,
-        background: '#ECFDF3',
+        borderColor: isDestinationActive ? '#2563eb' : (statusColors[destinationStatus] || statusColors.pending),
+        background: isDestinationActive ? '#DBEAFE' : '#ECFDF3',
+        boxShadow: isDestinationActive ? '0 0 12px rgba(37, 99, 235, 0.5)' : 'none',
+        transition: 'all 0.3s ease',
       },
+      className: isDestinationActive ? 'pipeline-node-active' : '',
     })
 
     console.log('Final nodes array:', flowNodes)
     return flowNodes
-  }, [pipelineData, stepStatuses, stepSequence, animatedCounts, activeStep])
+  }, [pipelineData, stepStatuses, stepSequence, animatedCounts, activeStep, stepRecordCounts, selectedMeta, renderTick])
 
   const edges = useMemo(() => {
     const flowEdges = []
@@ -396,7 +915,6 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
   }, [stepSequence])
 
   const active = pipelineData?.active && pipelineData?.current_run
-  const selectedMeta = options.find((a) => a.id === selectedApi)
   const dataStats = pipelineData?.data_stats || {}
 
   if (!visible) return null
@@ -440,6 +958,14 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
                 disabled={!selectedApi}
               >
                 Refresh
+              </button>
+              <button
+                className="pipeline-refresh"
+                onClick={() => triggerPipelineRun(selectedApi, true)}
+                disabled={!selectedApi || isTriggering}
+                title="Start/Run the pipeline for this API"
+              >
+                {isTriggering ? 'Starting...' : 'Run Pipeline'}
               </button>
             </>
           )}
@@ -598,26 +1124,39 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
                     ? JSON.stringify(stepInfo.details)
                     : ''
                 
-                // Extract count from details or data_stats
+                // Extract count from details or data_stats - use same logic as canvas nodes
                 let countDisplay = '—'
-                // Always try to show count, regardless of status
-                if (stepName === 'extract' && dataStats.total_records > 0) {
-                  countDisplay = `${dataStats.total_records}`
-                } else if (stepName === 'clean' && dataStats.total_records > 0) {
-                  countDisplay = `${dataStats.total_records}`
-                } else if (stepName === 'transform' && dataStats.total_items > 0) {
-                  countDisplay = `${dataStats.total_items}`
-                } else if (stepName === 'load' && dataStats.total_records > 0) {
-                  countDisplay = `${dataStats.total_records}`
-                } else if (details) {
+                
+                // First try to get from step details (most accurate)
+                let recordCount = null
+                if (stepInfo?.details) {
                   try {
                     const parsed = typeof details === 'string' ? JSON.parse(details) : details
-                    if (parsed.records) countDisplay = `${parsed.records}`
-                    else if (parsed.items) countDisplay = `${parsed.items}`
-                    else if (parsed.count) countDisplay = `${parsed.count}`
+                    recordCount = parsed.records || parsed.items || parsed.count || parsed.record_count || null
                   } catch (e) {
-                    // Keep default
+                    // Keep null if parsing fails
                   }
+                }
+                
+                // Fallback to data_stats (same as canvas)
+                // CRITICAL: Use data_stats even if it's 0 - this is where real-time updates come from!
+                if (recordCount === null || recordCount === undefined) {
+                  if (stepName === 'extract' && dataStats.total_records !== undefined && dataStats.total_records !== null) {
+                    recordCount = dataStats.total_records
+                  } else if (stepName === 'transform' && dataStats.total_items !== undefined && dataStats.total_items !== null) {
+                    recordCount = dataStats.total_items
+                  } else if (stepName === 'load' && dataStats.total_records !== undefined && dataStats.total_records !== null) {
+                    recordCount = dataStats.total_records
+                  }
+                }
+                
+                // Use animated count if available for consistency with canvas
+                const finalCount = animatedCounts[stepName] !== undefined 
+                  ? animatedCounts[stepName] 
+                  : recordCount
+                
+                if (finalCount !== null && finalCount !== undefined) {
+                  countDisplay = `${finalCount}`
                 }
                 
                 return (
