@@ -586,11 +586,11 @@ const fillComparisonData = (dataPoints, symbols) => {
       return null;
     };
 
-    // Extract price helper
+    // Extract price helper - prefer CoinGecko's raw current_price so values match exactly
     const getPrice = (data, depth = 0, maxDepth = 5) => {
       if (!data || depth > maxDepth) return null;
       if (typeof data === 'object' && data !== null) {
-        const priceFields = ['px', 'p', 'last', 'c', 'price', 'close', 'lastPrice', 'tradePrice'];
+        const priceFields = ['current_price', 'price', 'px', 'p', 'last', 'c', 'close', 'lastPrice', 'tradePrice'];
         for (const field of priceFields) {
           if (data[field] !== undefined && data[field] !== null) {
             const priceVal = data[field];
@@ -982,10 +982,14 @@ const fillComparisonData = (dataPoints, symbols) => {
     }));
   }, [websocketData, messages, latencyData, throughputData, exchange]);
 
-  // Set up SocketIO connection for real-time price updates (only if no props provided)
+  // Set up SocketIO connection for real-time price updates
   useEffect(() => {
-    // Skip if we're receiving data from props
-    if (websocketData || messages) {
+    // For OKX/Binance/custom streams, if data is already coming via props,
+    // we don't need an extra SocketIO connection.
+    // But for the global visualization view (exchange === 'global'),
+    // we still want SocketIO so prices can update every few seconds
+    // without requiring a full page refresh.
+    if ((websocketData || messages) && exchange !== 'global') {
       return;
     }
 
@@ -1353,6 +1357,13 @@ const fillComparisonData = (dataPoints, symbols) => {
 
   // Load crypto list data with chart data (only on initial load)
   const loadHistory = async (showLoading = false) => {
+    // For the global visualization view we don't need the backend
+    // /api/realtime-history/list endpoint (which may not exist),
+    // so we skip this call entirely to avoid 404 popups.
+    if (exchange === 'global') {
+      return;
+    }
+
     try {
       if (showLoading) {
         setHistoryLoading(true);
@@ -1361,6 +1372,11 @@ const fillComparisonData = (dataPoints, symbols) => {
       const response = await fetch(`${API_BASE_URL}/api/realtime-history/list`);
       
       if (!response.ok) {
+        // Gracefully handle missing history endpoint without breaking the UI
+        if (response.status === 404) {
+          console.warn('History endpoint /api/realtime-history/list not found (404). Skipping history load.');
+          return;
+        }
         throw new Error(`HTTP error! status: ${response.status}`);
       }
       
@@ -1499,16 +1515,13 @@ const fillComparisonData = (dataPoints, symbols) => {
           return hasChanges ? updatedData : prevData;
         });
       } else {
-        console.warn('No symbols found in response:', result);
-        // Set empty array if no data
-        setHistoryData([]);
+        console.warn('No symbols found in response from history API:', result);
+        // Keep existing data if any; do not force empty state
+        setHistoryData(prev => prev.length > 0 ? prev : []);
       }
     } catch (error) {
       console.error('Error loading crypto list:', error);
-      // Show error message to user
-      if (showLoading) {
-        alert(`Failed to load crypto data: ${error.message}. Please try refreshing.`);
-      }
+      // Avoid noisy alerts for missing/non-critical endpoints; log only
       // Keep existing data if available, otherwise set empty
       setHistoryData(prev => prev.length > 0 ? prev : []);
     } finally {

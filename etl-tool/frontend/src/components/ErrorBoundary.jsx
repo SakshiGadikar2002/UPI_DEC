@@ -20,11 +20,33 @@ class ErrorBoundary extends React.Component {
 
   handleReset = () => {
     this.setState({ hasError: false, error: null, errorInfo: null })
-    // Clear localStorage to prevent quota issues
+    // Clear all storage to prevent quota and cache issues
     try {
-      localStorage.removeItem('etl-history')
+      // Clear specific localStorage items that could cause issues
+      const keysToRemove = [
+        'etl-history',
+        'viz_market_data_cache',
+        'viz_market_data_cache_timestamp',
+        'etl-active-section'
+      ]
+      keysToRemove.forEach(key => {
+        try {
+          localStorage.removeItem(key)
+        } catch (e) {
+          console.warn(`Failed to remove ${key}:`, e)
+        }
+      })
+      
+      // Clear sessionStorage completely
+      try {
+        sessionStorage.clear()
+      } catch (e) {
+        console.warn('Failed to clear sessionStorage:', e)
+      }
+      
+      console.log('✅ Cleared storage, reloading...')
     } catch (e) {
-      console.error('Failed to clear localStorage:', e)
+      console.error('Failed to clear storage:', e)
     }
     window.location.reload()
   }

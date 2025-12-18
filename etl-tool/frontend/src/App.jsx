@@ -12,7 +12,20 @@ import PipelineViewer from './components/PipelineViewer'
 import './App.css'
 
 function App() {
-  const [activeSection, setActiveSection] = useState(() => localStorage.getItem('etl-active-section') || 'files')
+  // Always prefer API as the default section; ignore old 'files' value from previous versions
+  const [activeSection, setActiveSection] = useState(() => {
+    try {
+      const saved = localStorage.getItem('etl-active-section')
+      const allowed = ['api', 'websocket', 'visualization', 'files']
+      if (saved && allowed.includes(saved)) {
+        // If old value was 'files', now default to 'api' instead
+        return saved === 'files' ? 'api' : saved
+      }
+    } catch (e) {
+      console.warn('Failed to read active section from localStorage:', e)
+    }
+    return 'api'
+  })
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [sectionData, setSectionData] = useState({
     files: null,

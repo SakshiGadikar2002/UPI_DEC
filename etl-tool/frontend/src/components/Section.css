@@ -83,6 +83,13 @@
   gap: 20px;
 }
 
+.section-content-1 {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  margin-top: -25px;
+}
+
 .upload-area,
 .json-file-area {
   display: flex;
@@ -1428,4 +1435,10 @@ select.url-input {
 
 .collapsible-section .collapse-icon.expanded {
   transform: rotate(180deg);
+}
+
+/* Loading spinner animation for lazy-loaded components */
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }

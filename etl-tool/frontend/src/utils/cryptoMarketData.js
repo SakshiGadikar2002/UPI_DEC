@@ -153,8 +153,11 @@ export const fetchDetailedMarketData = async (retryCount = 0, maxRetries = 3) =>
     const ids = Object.values(TRACKED_CRYPTO_IDS).join(',');
     
     // Fetch coin market data first (required)
+    // Add a cache-busting timestamp param so visualization always gets fresh prices,
+    // even if the backend caches responses for other routes.
+    const timestamp = Date.now();
     const coinsResponse = await fetch(
-      `${API_BASE_URL}/api/crypto/markets?vs_currency=usd&ids=${ids}&order=market_cap_desc&per_page=20&page=1&sparkline=true&price_change_percentage=1h%2C24h%2C7d`
+      `${API_BASE_URL}/api/crypto/markets?vs_currency=usd&ids=${ids}&order=market_cap_desc&per_page=20&page=1&sparkline=true&price_change_percentage=1h%2C24h%2C7d&t=${timestamp}`
     );
     
     // Handle 429 (Too Many Requests) with exponential backoff retry
@@ -274,20 +277,6 @@ export const fetchDetailedMarketData = async (retryCount = 0, maxRetries = 3) =>
           })
         : [];
       
-      // Format price with appropriate precision (preserve CoinGecko's precision)
-      // For most cryptocurrencies, 2-8 decimal places is appropriate
-      const formatPrice = (price) => {
-        if (!price || price === 0) return '0';
-        // For prices > 1, use 2 decimal places; for prices < 1, use more precision
-        if (price >= 1) {
-          return price.toFixed(2);
-        } else if (price >= 0.01) {
-          return price.toFixed(4);
-        } else {
-          return price.toFixed(8);
-        }
-      };
-      
       transformedData.push({
         arg: {
           channel: 'tickers',
@@ -295,17 +284,20 @@ export const fetchDetailedMarketData = async (retryCount = 0, maxRetries = 3) =>
         },
         data: [{
           instId: symbol.replace('USDT', '-USDT'),
-          last: formatPrice(currentPrice), // Real-time price from CoinGecko
-          px: formatPrice(currentPrice), // Primary price field for RealtimeStream - reflects current market price
-          p: formatPrice(currentPrice), // Alternative price field - ensures compatibility
+          // Keep raw CoinGecko price so it matches exactly
+          current_price: currentPrice,
+          price: currentPrice,
+          last: currentPrice,
+          px: currentPrice,
+          p: currentPrice,
           lastSz: '0',
-          askPx: formatPrice(currentPrice * 1.001), // Simulated ask price
+          askPx: currentPrice * 1.001, // Simulated ask price
           askSz: '0',
-          bidPx: formatPrice(currentPrice * 0.999), // Simulated bid price
+          bidPx: currentPrice * 0.999, // Simulated bid price
           bidSz: '0',
-          open24h: currentPrice ? formatPrice(currentPrice / (1 + (coin.price_change_percentage_24h || 0) / 100)) : '0',
-          high24h: coin.high_24h ? formatPrice(coin.high_24h) : formatPrice(currentPrice),
-          low24h: coin.low_24h ? formatPrice(coin.low_24h) : formatPrice(currentPrice),
+          open24h: currentPrice ? currentPrice / (1 + (coin.price_change_percentage_24h || 0) / 100) : 0,
+          high24h: coin.high_24h || currentPrice,
+          low24h: coin.low_24h || currentPrice,
           vol24h: coin.total_volume?.toString() || '0',
           volCcy24h: coin.total_volume && currentPrice ? (coin.total_volume * currentPrice).toFixed(2) : '0',
           ts: currentTimestamp.toString(), // Current timestamp for real-time tracking

@@ -118,8 +118,7 @@ SCHEDULED_APIS = [
 ]
 
 # Schedule interval in seconds (all APIs run every N seconds)
-# Changed to 30 minutes (1800 seconds) to reduce flickering and data generation
-SCHEDULE_INTERVAL_SECONDS = 60  # 30 minutes
+SCHEDULE_INTERVAL_SECONDS = 18000  
 # Max concurrent workers in thread pool
 MAX_WORKERS = 8
 
