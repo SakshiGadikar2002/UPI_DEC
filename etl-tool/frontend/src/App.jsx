@@ -18,7 +18,6 @@ function App() {
       const saved = localStorage.getItem('etl-active-section')
       const allowed = ['api', 'websocket', 'visualization', 'files']
       if (saved && allowed.includes(saved)) {
-        // If old value was 'files', now default to 'api' instead
         return saved === 'files' ? 'api' : saved
       }
     } catch (e) {
@@ -26,7 +25,14 @@ function App() {
     }
     return 'api'
   })
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    try {
+      const saved = localStorage.getItem('etl-sidebar-open')
+      if (saved === 'false') return false
+      if (saved === 'true') return true
+    } catch {}
+    return false // Closed by default after login
+  })
   const [sectionData, setSectionData] = useState({
     files: null,
     api: null,
@@ -276,7 +282,24 @@ function App() {
     }
   }, [activeSection])
 
+  useEffect(() => {
+    try {
+      localStorage.setItem('etl-sidebar-open', sidebarOpen)
+    } catch {}
+  }, [sidebarOpen])
+
   const shouldShowAuth = !user && (!token || !!authError)
+
+  // After successful login, auto-navigate to API section and close sidebar ONLY if this is a new login (not a refresh)
+  useEffect(() => {
+    // Only redirect to API if there was no previous section (i.e., first login, not refresh)
+    const lastSection = localStorage.getItem('etl-active-section')
+    if (user && token && (!lastSection || lastSection === 'files')) {
+      setActiveSection('api')
+      setSidebarOpen(false)
+    }
+    // eslint-disable-next-line
+  }, [user, token])
 
   // Route to the active section component
   const renderActiveSection = () => {
