@@ -1161,13 +1161,14 @@ async def get_binance_symbols():
 COINGECKO_API_BASE = "https://api.coingecko.com/api/v3"
 # Rate limiting: track last request time
 _last_coingecko_request = {"time": 0}
-MIN_REQUEST_INTERVAL = 20.0  # Minimum 20 seconds between requests to avoid rate limiting (optimized for 20s refresh)
+MIN_REQUEST_INTERVAL = 20.0  # Minimum 20 seconds between requests to avoid rate limiting
 # Response cache to reduce API calls
 _coingecko_cache = {
     "markets": {"data": None, "timestamp": 0},
     "global": {"data": None, "timestamp": 0}
 }
-CACHE_DURATION = 25  # Cache responses for 25 seconds to support 20s frontend refresh while respecting rate limits
+# REDUCE cache duration for real-time accuracy - match frontend refresh interval
+CACHE_DURATION = 5  # Cache for only 5 seconds to ensure near real-time prices (matches frontend refresh)
 
 
 @app.get("/api/crypto/global-stats")
@@ -1181,9 +1182,13 @@ async def get_global_crypto_stats():
             logger.info("Returning cached global stats")
             return JSONResponse(content=cache_entry["data"])
         
-        # Rate limiting: ensure minimum interval between requests
+        # Only wait for rate limit if we don't have valid cache
         time_since_last = current_time - _last_coingecko_request["time"]
         if time_since_last < MIN_REQUEST_INTERVAL:
+            # Return stale cache immediately instead of waiting
+            if cache_entry["data"]:
+                logger.info("Rate limited, returning stale cached global stats")
+                return JSONResponse(content=cache_entry["data"])
             await asyncio.sleep(MIN_REQUEST_INTERVAL - time_since_last)
         
         _last_coingecko_request["time"] = time.time()
@@ -1194,19 +1199,19 @@ async def get_global_crypto_stats():
             try:
                 response = requests.get(
                     f"{COINGECKO_API_BASE}/global",
-                    timeout=15,
+                    timeout=8,  # Reduced from 15 to 8 seconds
                     headers={"Accept": "application/json"}
                 )
                 
                 # Handle 429 rate limit errors
                 if response.status_code == 429:
                     if attempt < max_retries - 1:
-                        backoff_delay = min(2 ** attempt * 5, 30)  # 5s, 10s, 20s, max 30s
+                        backoff_delay = min(2 ** attempt * 5, 30)
                         logger.warning(f"Rate limited (429). Retrying in {backoff_delay}s... (attempt {attempt + 1}/{max_retries})")
                         await asyncio.sleep(backoff_delay)
                         continue
                     else:
-                        # Return cached data if available, otherwise raise error
+                        # Return cached data if available
                         if cache_entry["data"]:
                             logger.warning("Rate limited, returning stale cached data")
                             return JSONResponse(content=cache_entry["data"])
@@ -1218,6 +1223,13 @@ async def get_global_crypto_stats():
                 response.raise_for_status()
                 data = response.json()
                 
+                # FIX: Normalize field names - CoinGecko uses 'total_volume' but frontend expects 'total_volume_24h'
+                if isinstance(data, dict) and "data" in data:
+                    if "total_volume" in data["data"] and "total_volume_24h" not in data["data"]:
+                        data["data"]["total_volume_24h"] = data["data"]["total_volume"]
+                elif isinstance(data, dict) and "total_volume" in data and "total_volume_24h" not in data:
+                    data["total_volume_24h"] = data["total_volume"]
+                
                 # Update cache
                 _coingecko_cache["global"] = {"data": data, "timestamp": time.time()}
                 return JSONResponse(content=data)
@@ -1226,6 +1238,10 @@ async def get_global_crypto_stats():
                 if attempt < max_retries - 1:
                     await asyncio.sleep(2 ** attempt)
                     continue
+                # Return stale cache on timeout
+                if cache_entry["data"]:
+                    logger.warning("Timeout, returning stale cached data")
+                    return JSONResponse(content=cache_entry["data"])
                 raise HTTPException(status_code=504, detail="CoinGecko API timeout")
             except requests.exceptions.HTTPError as e:
                 if e.response.status_code == 429 and attempt < max_retries - 1:
@@ -1321,6 +1337,13 @@ async def get_crypto_markets(
                 
                 response.raise_for_status()
                 data = response.json()
+                
+                # FIX: Normalize field names - CoinGecko uses 'total_volume' but frontend expects 'total_volume_24h'
+                if isinstance(data, dict) and "data" in data:
+                    if "total_volume" in data["data"] and "total_volume_24h" not in data["data"]:
+                        data["data"]["total_volume_24h"] = data["data"]["total_volume"]
+                elif isinstance(data, dict) and "total_volume" in data and "total_volume_24h" not in data:
+                    data["total_volume_24h"] = data["total_volume"]
                 
                 # Update cache
                 _coingecko_cache["markets"] = {"data": data, "timestamp": time.time()}

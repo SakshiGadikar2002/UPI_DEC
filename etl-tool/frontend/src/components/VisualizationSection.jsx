@@ -54,6 +54,9 @@ function VisualizationSection() {
       // Validate that we have data
       if (coinsData.length === 0) {
         console.warn('No coin data received, will retry...')
+        // FIX: Always reset loading state and fetching flag, even on empty data
+        setIsLoading(false)
+        isFetchingRef.current = false
         // Don't set error, just return and let interval retry
         return
       }
@@ -66,7 +69,7 @@ function VisualizationSection() {
           const connectionTime = prevData?.connectionTime || connectionStartTimeRef.current
           const firstMessageTime = prevData?.firstMessageTime || connectionStartTimeRef.current
           
-          // Calculate accurate message rate (updates every 20 seconds = 0.05 msg/s)
+          // Calculate accurate message rate (updates every 5 seconds = 0.2 msg/s)
           const messagesPerSecond = 1 / (REFRESH_INTERVAL / 1000)
           
           const transformedData = {
@@ -133,22 +136,32 @@ function VisualizationSection() {
         errorMessage = 'Request timeout. Please check your connection and try again.'
       } else if (err.message && err.message.includes('NetworkError')) {
         errorMessage = 'Network error. Please check your internet connection.'
+      } else if (err.message && err.message.includes('Failed to fetch')) {
+        errorMessage = 'Failed to fetch data. Please check your connection and try again.'
       }
       setError(errorMessage)
       setIsLoading(false)
     } finally {
+      // FIX: Always reset fetching flag in finally block
       isFetchingRef.current = false
     }
   }, []) // No dependencies - uses refs for state that doesn't need to trigger re-renders
 
-  // Fetch global crypto market data continuously with optimized 20-second interval
+  // Fetch global crypto market data continuously with optimized interval
   useEffect(() => {
     let isMounted = true
+    
+    // FIX: Reset refs on mount to handle page reloads properly
+    isFirstFetchRef.current = true
+    isFetchingRef.current = false
+    connectionStartTimeRef.current = Date.now()
+    messageCountRef.current = 0
+    messagesRef.current = []
     
     // Fetch immediately on mount
     fetchData()
 
-    // Then fetch every 20 seconds for real-time updates
+    // Then fetch every 5 seconds for real-time updates
     intervalRef.current = setInterval(() => {
       if (isMounted) {
         fetchData()
@@ -171,6 +184,8 @@ function VisualizationSection() {
     return () => {
       // Clear messages array to free memory
       messagesRef.current = []
+      // Reset fetching flag on unmount
+      isFetchingRef.current = false
       console.log('🧹 Visualization component cleaned up')
     }
   }, [])
@@ -249,6 +264,7 @@ function VisualizationSection() {
                 setError(null)
                 setIsLoading(true)
                 isFirstFetchRef.current = true
+                isFetchingRef.current = false // FIX: Reset fetching flag on retry
                 fetchData()
               }}
               style={{

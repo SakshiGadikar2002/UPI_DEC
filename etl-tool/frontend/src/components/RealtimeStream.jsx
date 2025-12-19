@@ -284,6 +284,27 @@ const convertToOKXFormat = (symbol) => {
   return symbol;
 };
 
+// Helper function to format price with appropriate decimal places
+const formatPrice = (price) => {
+  if (!price || price <= 0) return 'N/A';
+  
+  // For prices >= $1, show 2 decimals
+  // For prices < $1, show up to 6 decimals (for coins like SHIB, DOGE)
+  if (price >= 1) {
+    return price.toLocaleString('en-US', { 
+      minimumFractionDigits: 2, 
+      maximumFractionDigits: 2 
+    });
+  } else {
+    // For small prices, show significant digits
+    const decimals = Math.max(2, 6 - Math.floor(Math.log10(price)));
+    return price.toLocaleString('en-US', { 
+      minimumFractionDigits: decimals, 
+      maximumFractionDigits: decimals 
+    });
+  }
+};
+
  function RealtimeStream({ onDataCollected, websocketData, messages, latencyData, throughputData, defaultTab = 'dashboard', exchange = 'okx', showTopMovers = true }) {
   const [isConnected, setIsConnected] = useState(false);
   const [connectionId, setConnectionId] = useState(null);
@@ -2673,13 +2694,13 @@ const fillComparisonData = (dataPoints, symbols) => {
                               <div className="market-down-card-content">
                                 <div className="market-down-card-name">{cryptoInfo.name}</div>
                                 <div className="market-down-card-price">
-                                  ${item.price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  ${formatPrice(item.price)}
                                 </div>
                                 <div className="market-down-card-change negative">
                                   <span className="change-arrow">▾</span> {
-                                    item.change1h < 0 ? Math.abs(item.change1h).toFixed(2) :
-                                    item.change6h < 0 ? Math.abs(item.change6h).toFixed(2) :
-                                    Math.abs(item.change12h).toFixed(2)
+                                    item.change1h < 0 ? formatPrice(Math.abs(item.change1h)) :
+                                    item.change6h < 0 ? formatPrice(Math.abs(item.change6h)) :
+                                    formatPrice(Math.abs(item.change12h))
                                   }%
                                 </div>
                               </div>
@@ -2855,12 +2876,12 @@ const fillComparisonData = (dataPoints, symbols) => {
                             </div>
                           </td>
                           <td className="price-cell">
-                            {item.price > 0 ? `$${item.price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'N/A'}
+                            {item.price > 0 ? `$${formatPrice(item.price)}` : 'N/A'}
                           </td>
                           <td className={`change-cell ${change1h >= 0 ? 'positive' : 'negative'}`}>
                             {item.price > 0 ? (
                               <>
-                                {change1h >= 0 ? '▲' : '▼'} {Math.abs(change1h).toFixed(2)}%
+                                {change1h >= 0 ? '▲' : '▼'} {formatPrice(Math.abs(change1h))}
                               </>
                             ) : (
                               'N/A'
@@ -2869,7 +2890,7 @@ const fillComparisonData = (dataPoints, symbols) => {
                           <td className={`change-cell ${change6h >= 0 ? 'positive' : 'negative'}`}>
                             {item.price > 0 ? (
                               <>
-                                {change6h >= 0 ? '▲' : '▼'} {Math.abs(change6h).toFixed(2)}%
+                                {change6h >= 0 ? '▲' : '▼'} {formatPrice(Math.abs(change6h))}
                               </>
                             ) : (
                               'N/A'
@@ -2878,7 +2899,7 @@ const fillComparisonData = (dataPoints, symbols) => {
                           <td className={`change-cell ${change12h >= 0 ? 'positive' : 'negative'}`}>
                             {item.price > 0 ? (
                               <>
-                                {change12h >= 0 ? '▲' : '▼'} {Math.abs(change12h).toFixed(2)}%
+                                {change12h >= 0 ? '▲' : '▼'} {formatPrice(Math.abs(change12h))}
                               </>
                             ) : (
                               'N/A'
@@ -3207,7 +3228,7 @@ const fillComparisonData = (dataPoints, symbols) => {
                                     </span>
                                     {item.price > 0 && (
                                       <span style={{ color: '#6b7280', marginLeft: '8px', fontWeight: 500 }}>
-                                        (${item.price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                                        (${formatPrice(item.price)})
                                       </span>
                                     )}
                                   </p>
