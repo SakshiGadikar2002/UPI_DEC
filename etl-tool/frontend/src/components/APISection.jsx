@@ -19,7 +19,8 @@ function APISection({ data, setData }) {
   const [bearerToken, setBearerToken] = useState('')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [ingestionMode, setIngestionMode] = useState('Real-Time Streaming (New)')
+  // Only one working ingestion mode: Streaming
+  const [ingestionMode, setIngestionMode] = useState('Streaming')
   const [pollingInterval, setPollingInterval] = useState(1000)
   const [quickConnectExpanded, setQuickConnectExpanded] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -691,7 +692,7 @@ function APISection({ data, setData }) {
       setConnectorId(connector.connector_id)
 
       // If real-time streaming, start the connector
-      if (ingestionMode === 'Real-Time Streaming (New)') {
+      if (ingestionMode === 'Streaming') {
         const startResponse = await fetch(`/api/connectors/${connector.connector_id}/start`, {
           method: 'POST'
         })
@@ -1264,17 +1265,15 @@ function APISection({ data, setData }) {
               <label>Ingestion Mode</label>
               <select
                 value={ingestionMode}
-                onChange={(e) => setIngestionMode(e.target.value)}
                 className="url-input"
-                disabled={!backendOnline}
+                disabled
               >
-                <option value="Real-Time Streaming (New)">Real-Time Streaming (New)</option>
-                <option value="One-Time Fetch">One-Time Fetch</option>
+                <option value="Streaming">Streaming</option>
               </select>
             </div>
           </div>
 
-          {ingestionMode === 'Real-Time Streaming (New)' && (
+          {ingestionMode === 'Streaming' && (
             <div className="api-config-row">
               <div className="input-group">
                 <label>Polling Interval (ms) - REST only</label>
@@ -1474,7 +1473,7 @@ function APISection({ data, setData }) {
           )}
 
           <div className="button-group">
-            {ingestionMode === 'Real-Time Streaming (New)' ? (
+            {ingestionMode === 'Streaming' ? (
               <button 
                 onClick={handleStartOrStopStream} 
                 disabled={loading || !apiUrl || !backendOnline}
@@ -1487,8 +1486,8 @@ function APISection({ data, setData }) {
                 {loading 
                   ? 'Creating Connector...' 
                   : connectorStatus === 'running'
-                    ? 'Stop Real-Time Stream'
-                    : 'Start Real-Time Stream'}
+                    ? 'Stop Streaming'
+                    : 'Start Streaming'}
               </button>
             ) : (
               <button 
