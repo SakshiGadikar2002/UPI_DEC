@@ -141,13 +141,7 @@ async def _initialize_tables():
                 price DECIMAL(20, 8),
                 data JSONB NOT NULL,
                 message_type VARCHAR(50) DEFAULT 'trade',
-                latency_ms DECIMAL(10, 3),
-                message_number INTEGER,
-                format VARCHAR(50),
-                extract_time DECIMAL(10, 6),
-                transform_time DECIMAL(10, 6),
-                load_time DECIMAL(10, 6),
-                total_time DECIMAL(10, 6)
+                message_number INTEGER
             )
         """)
         
@@ -164,26 +158,7 @@ async def _initialize_tables():
             CREATE INDEX IF NOT EXISTS idx_websocket_messages_instrument 
             ON websocket_messages(instrument)
         """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_websocket_messages_price 
-            ON websocket_messages(price)
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_websocket_messages_message_number 
-            ON websocket_messages(message_number)
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_websocket_messages_timestamp_exchange 
-            ON websocket_messages(timestamp DESC, exchange)
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_websocket_messages_instrument_timestamp 
-            ON websocket_messages(instrument, timestamp DESC)
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_websocket_messages_exchange_instrument_timestamp 
-            ON websocket_messages(exchange, instrument, timestamp DESC)
-        """)
+        # Removed indexes related to dropped columns
 
         # Create users table for authentication
         await conn.execute("""
@@ -344,40 +319,11 @@ async def _initialize_tables():
                 price DECIMAL(20, 8),
                 data JSONB NOT NULL,
                 message_type VARCHAR(50) DEFAULT 'api_response',
-                raw_response JSONB,
-                status_code INTEGER,
-                response_time_ms DECIMAL(10, 3),
-                source_id VARCHAR(50),
-                session_id VARCHAR(100),
                 FOREIGN KEY (connector_id) REFERENCES api_connectors(connector_id) ON DELETE CASCADE
             )
         """)
         
-        # Add source_id column if it doesn't exist (for existing databases)
-        await conn.execute("""
-            DO $$ 
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns 
-                    WHERE table_name='api_connector_data' AND column_name='source_id'
-                ) THEN
-                    ALTER TABLE api_connector_data ADD COLUMN source_id VARCHAR(50);
-                END IF;
-            END $$;
-        """)
-        
-        # Add session_id column if it doesn't exist (for existing databases)
-        await conn.execute("""
-            DO $$ 
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns 
-                    WHERE table_name='api_connector_data' AND column_name='session_id'
-                ) THEN
-                    ALTER TABLE api_connector_data ADD COLUMN session_id VARCHAR(100);
-                END IF;
-            END $$;
-        """)
+        # Removed code for adding dropped columns
         
         # Create indexes for api_connector_data
         await conn.execute("""
@@ -388,18 +334,7 @@ async def _initialize_tables():
             CREATE INDEX IF NOT EXISTS idx_api_connector_data_timestamp 
             ON api_connector_data(timestamp DESC)
         """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_api_connector_data_exchange 
-            ON api_connector_data(exchange)
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_api_connector_data_instrument 
-            ON api_connector_data(instrument)
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_api_connector_data_connector_timestamp 
-            ON api_connector_data(connector_id, timestamp DESC)
-        """)
+        # Removed indexes related to dropped columns
         
         # Create api_connector_items table for granular individual items from API responses
         await conn.execute("""
@@ -412,16 +347,7 @@ async def _initialize_tables():
                 coin_name VARCHAR(100),
                 coin_symbol VARCHAR(20),
                 price DECIMAL(20, 8),
-                market_cap DECIMAL(20, 2),
-                volume_24h DECIMAL(20, 2),
-                price_change_24h DECIMAL(10, 4),
-                market_cap_rank INTEGER,
                 item_data JSONB NOT NULL,
-                raw_item JSONB,
-                item_index INTEGER,
-                response_time_ms DECIMAL(10, 3),
-                source_id VARCHAR(50),
-                session_id VARCHAR(100),
                 FOREIGN KEY (connector_id) REFERENCES api_connectors(connector_id) ON DELETE CASCADE
             )
         """)
@@ -435,18 +361,7 @@ async def _initialize_tables():
             CREATE INDEX IF NOT EXISTS idx_api_connector_items_timestamp 
             ON api_connector_items(timestamp DESC)
         """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_api_connector_items_coin_symbol 
-            ON api_connector_items(coin_symbol)
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_api_connector_items_exchange 
-            ON api_connector_items(exchange)
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_api_connector_items_connector_timestamp 
-            ON api_connector_items(connector_id, timestamp DESC)
-        """)
+        # Removed indexes related to dropped columns
         
         # Create alert_rules table
         await conn.execute("""
@@ -456,34 +371,12 @@ async def _initialize_tables():
                 alert_type VARCHAR(50) NOT NULL,
                 enabled BOOLEAN DEFAULT TRUE,
                 description TEXT,
-                
-                -- Price threshold parameters
                 symbol VARCHAR(50),
                 price_threshold DECIMAL(20, 8),
                 price_comparison VARCHAR(20),
-                
-                -- Volatility parameters
-                volatility_percentage DECIMAL(10, 2),
-                volatility_duration_minutes INTEGER,
-                
-                -- Data missing parameters
-                data_missing_minutes INTEGER,
-                api_endpoint VARCHAR(255),
-                
-                -- System health parameters
-                health_check_type VARCHAR(100),
-                threshold_value DECIMAL(20, 8),
-                
-                -- Notification settings
                 notification_channels VARCHAR(50) DEFAULT 'email',
                 email_recipients TEXT,
-                slack_webhook_url TEXT,
-                
-                -- Alert settings
                 severity VARCHAR(50) DEFAULT 'warning',
-                cooldown_minutes INTEGER DEFAULT 5,
-                max_alerts_per_day INTEGER,
-                
                 created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
             )
@@ -498,10 +391,7 @@ async def _initialize_tables():
             CREATE INDEX IF NOT EXISTS idx_alert_rules_enabled 
             ON alert_rules(enabled)
         """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_alert_rules_symbol 
-            ON alert_rules(symbol)
-        """)
+        # Removed index related to dropped columns
         
         # Create alert_logs table (alert history)
         await conn.execute("""
