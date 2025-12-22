@@ -516,6 +516,15 @@ async def save_api_items_to_database(connector_id: str, api_name: str, response_
                     if price is None:
                         price = 0.0
                     
+                    # Determine exchange based on connector_id or use provided exchange
+                    exchange_value = "scheduled_api"
+                    if connector_id.startswith("binance"):
+                        exchange_value = "Binance"
+                    elif connector_id.startswith("coingecko"):
+                        exchange_value = "CoinGecko"
+                    elif connector_id.startswith("cryptocompare"):
+                        exchange_value = "CryptoCompare"
+                    
                     await conn.execute("""
                         INSERT INTO api_connector_items (
                             connector_id, api_name, timestamp, exchange, coin_name, coin_symbol,
@@ -523,7 +532,7 @@ async def save_api_items_to_database(connector_id: str, api_name: str, response_
                             item_data, raw_item, item_index, response_time_ms, source_id, session_id
                         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
                     """,
-                        connector_id, api_name, timestamp, "scheduled_api",
+                        connector_id, api_name, timestamp, exchange_value,
                         coin_name, coin_symbol, price, market_cap, volume_24h, price_change_24h, market_cap_rank,
                         json.dumps(item), json.dumps(item.get("raw_item", {})), idx, response_time_ms, source_id, session_id
                     )
@@ -828,20 +837,8 @@ async def save_to_database(message: dict):
                 inserted_ids.append(row_id)
                 records_saved = 1
 
-            # Also insert into websocket_messages for backward compatibility
-            await conn.execute(
-                """
-                INSERT INTO websocket_messages (
-                    timestamp, exchange, instrument, price, data, message_type
-                ) VALUES ($1, $2, $3, $4, $5, $6)
-                """,
-                timestamp,
-                exchange,
-                instrument,
-                price,
-                json.dumps(data),
-                message_type,
-            )
+            # Note: websocket_messages table is ONLY for websocket APIs (OKX, Binance, custom websocket)
+            # REST APIs should NOT write to websocket_messages - removed backward compatibility insert
 
             logger.info(
                 f"[DB] ✅ Saved {records_saved} record(s) to database for connector_id={connector_id}, exchange={exchange}, timestamp={timestamp}"
@@ -849,6 +846,32 @@ async def save_to_database(message: dict):
             print(
                 f"[DB] ✅ Saved {records_saved} record(s) to database for connector_id={connector_id}, exchange={exchange}"
             )
+            
+            # For manually run integrated APIs, also save to api_connector_items
+            # Scheduled APIs already save via scheduler callback, so skip them here
+            is_scheduled_api = connector_id in [api.get("connector_id", api.get("id")) for api in SCHEDULED_APIS]
+            is_manual_integrated = not is_scheduled_api and message_type in ["api_response", "scheduled_api_call"]
+            
+            if is_manual_integrated and isinstance(data, (list, dict)):
+                # Get API name from api_connectors table
+                api_name = connector_id
+                try:
+                    api_row = await conn.fetchrow(
+                        "SELECT name FROM api_connectors WHERE connector_id = $1",
+                        connector_id
+                    )
+                    if api_row:
+                        api_name = api_row.get("name", connector_id)
+                except:
+                    pass
+                
+                # Schedule items save in background (don't block main save)
+                try:
+                    # Use asyncio.create_task to run in background
+                    loop = asyncio.get_event_loop()
+                    loop.create_task(save_api_items_to_database(connector_id, api_name, data, response_time_ms))
+                except Exception as items_error:
+                    logger.warning(f"[DB] Could not schedule items save for manual API {connector_id}: {items_error}")
 
             # Return metadata (include all IDs so callers can log details/counts)
             return {
@@ -2168,6 +2191,14 @@ async def start_connector(connector_id: str):
             # Start connector
             await connector_manager.start_connector(connector_id)
             
+            # Update api_connectors status to 'running' (also done in connector_manager, but ensure it's set)
+            async with pool.acquire() as conn:
+                await conn.execute("""
+                    UPDATE api_connectors 
+                    SET status = 'running', updated_at = NOW()
+                    WHERE connector_id = $1
+                """, connector_id)
+            
             return {"message": "Connector started", "connector_id": connector_id}
     except HTTPException:
         raise
@@ -2181,6 +2212,16 @@ async def stop_connector(connector_id: str):
     """Stop a connector"""
     try:
         await connector_manager.stop_connector(connector_id)
+        
+        # Update api_connectors status to 'inactive' (also done in connector_manager, but ensure it's set)
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE api_connectors 
+                SET status = 'inactive', updated_at = NOW()
+                WHERE connector_id = $1
+            """, connector_id)
+        
         return {"message": "Connector stopped", "connector_id": connector_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

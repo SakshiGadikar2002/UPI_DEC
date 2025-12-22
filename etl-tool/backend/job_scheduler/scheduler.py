@@ -15,6 +15,7 @@ from database import (
     complete_pipeline_run,
     log_pipeline_step,
     start_pipeline_run,
+    get_pool,
 )
 
 logger = logging.getLogger(__name__)
@@ -73,7 +74,7 @@ SCHEDULED_APIS = [
 ]
 
 # Schedule interval in seconds (all APIs run every N seconds)
-SCHEDULE_INTERVAL_SECONDS =  60
+SCHEDULE_INTERVAL_SECONDS =  1800
 # Max concurrent workers in thread pool
 MAX_WORKERS = 8
 
@@ -330,6 +331,22 @@ class JobScheduler:
                 self._run_scheduled_batch
             )
     
+    async def _update_scheduled_connectors_status(self, status: str):
+        """Update api_connectors status for all scheduled APIs"""
+        try:
+            pool = get_pool()
+            async with pool.acquire() as conn:
+                for api in SCHEDULED_APIS:
+                    api_id = api.get("id", "unknown")
+                    await conn.execute("""
+                        UPDATE api_connectors 
+                        SET status = $1, updated_at = NOW()
+                        WHERE connector_id = $2
+                    """, status, api_id)
+            logger.info(f"[JOB] Updated {len(SCHEDULED_APIS)} scheduled connectors to status: {status}")
+        except Exception as e:
+            logger.error(f"[JOB] Error updating scheduled connector statuses: {e}")
+    
     def start(self) -> None:
         """Start the job scheduler (runs first batch immediately, then at interval)."""
         if self.is_running:
@@ -342,6 +359,15 @@ class JobScheduler:
         print(f"[JOB SCHEDULER] ✅ STARTED: {len(SCHEDULED_APIS)} APIs every {SCHEDULE_INTERVAL_SECONDS}s")
         print(f"[JOB SCHEDULER] 📊 APIs configured: {', '.join([api['id'] for api in SCHEDULED_APIS])}")
         
+        # Update api_connectors status to 'running' for all scheduled APIs
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self._update_scheduled_connectors_status("running"),
+                self.event_loop
+            ).result(timeout=5)
+        except Exception as e:
+            logger.warning(f"[JOB] Could not update connector statuses: {e}")
+        
         # Run first batch immediately
         self._run_scheduled_batch()
     
@@ -352,6 +378,15 @@ class JobScheduler:
             return
         
         self.is_running = False
+        
+        # Update api_connectors status to 'inactive' for all scheduled APIs
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self._update_scheduled_connectors_status("inactive"),
+                self.event_loop
+            ).result(timeout=5)
+        except Exception as e:
+            logger.warning(f"[JOB] Could not update connector statuses: {e}")
         
         # Cancel pending schedule
         if self._schedule_handle:

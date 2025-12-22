@@ -333,7 +333,7 @@ async def _initialize_tables():
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS connector_status (
                 id SERIAL PRIMARY KEY,
-                connector_id VARCHAR(100) NOT NULL,
+                connector_id VARCHAR(100) NOT NULL UNIQUE,
                 status VARCHAR(20) NOT NULL DEFAULT 'stopped',
                 last_message_timestamp TIMESTAMP WITH TIME ZONE,
                 message_count BIGINT DEFAULT 0,
@@ -343,6 +343,16 @@ async def _initialize_tables():
                 performance_metrics JSONB,
                 updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
                 FOREIGN KEY (connector_id) REFERENCES api_connectors(connector_id) ON DELETE CASCADE
+            )
+        """)
+        
+        # Clean up any duplicate entries (keep the most recent one per connector_id)
+        await conn.execute("""
+            DELETE FROM connector_status
+            WHERE id NOT IN (
+                SELECT DISTINCT ON (connector_id) id
+                FROM connector_status
+                ORDER BY connector_id, updated_at DESC
             )
         """)
         
@@ -522,29 +532,10 @@ async def _initialize_tables():
         
         # Alert-related tables removed (alert_rules, alert_logs, alert_tracking, notification_queue)
         
-        # Create price_history table (for volatility calculation)
+        # price_history table removed - no longer used
+        # Drop the table if it exists (for cleanup)
         await conn.execute("""
-            CREATE TABLE IF NOT EXISTS price_history (
-                id SERIAL PRIMARY KEY,
-                symbol VARCHAR(50) NOT NULL,
-                price DECIMAL(20, 8) NOT NULL,
-                source VARCHAR(100),
-                timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
-            )
-        """)
-        
-        # Create indexes for price_history
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_price_history_symbol_timestamp 
-            ON price_history(symbol, timestamp DESC)
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_price_history_symbol 
-            ON price_history(symbol)
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_price_history_timestamp 
-            ON price_history(timestamp DESC)
+            DROP TABLE IF EXISTS price_history CASCADE
         """)
 
         # Pipeline run tracking for scheduled/non-realtime APIs

@@ -134,11 +134,20 @@ class ConnectorManager:
             traceback.print_exc()
     
     async def _update_status_in_db(self, connector_id: str, status: str, error_log: Optional[str] = None):
-        """Update connector status in database"""
+        """Update connector status in database (both api_connectors and connector_status tables)"""
         try:
             pool = get_pool()
             async with pool.acquire() as conn:
-                # Check if status record exists
+                # Update api_connectors table to reflect running state
+                # Map connector status to api_connectors status
+                api_status = "running" if status == "running" else "inactive"
+                await conn.execute("""
+                    UPDATE api_connectors 
+                    SET status = $1, updated_at = $2
+                    WHERE connector_id = $3
+                """, api_status, datetime.utcnow(), connector_id)
+                
+                # Update connector_status table
                 existing = await conn.fetchrow(
                     "SELECT id FROM connector_status WHERE connector_id = $1",
                     connector_id
@@ -152,11 +161,16 @@ class ConnectorManager:
                         WHERE connector_id = $4
                     """, status, error_log, datetime.utcnow(), connector_id)
                 else:
-                    # Create new
+                    # Create new (using ON CONFLICT to handle race conditions)
                     await conn.execute("""
                         INSERT INTO connector_status 
                         (connector_id, status, error_log, updated_at)
                         VALUES ($1, $2, $3, $4)
+                        ON CONFLICT (connector_id) 
+                        DO UPDATE SET 
+                            status = EXCLUDED.status,
+                            error_log = EXCLUDED.error_log,
+                            updated_at = EXCLUDED.updated_at
                     """, connector_id, status, error_log, datetime.utcnow())
         except Exception as e:
             logger.error(f"Error updating status in DB: {e}")
