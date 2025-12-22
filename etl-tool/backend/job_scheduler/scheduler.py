@@ -118,7 +118,7 @@ SCHEDULED_APIS = [
 ]
 
 # Schedule interval in seconds (all APIs run every N seconds)
-SCHEDULE_INTERVAL_SECONDS =   1800
+SCHEDULE_INTERVAL_SECONDS =  18000
 # Max concurrent workers in thread pool
 MAX_WORKERS = 8
 

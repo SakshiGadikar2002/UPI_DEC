@@ -144,7 +144,55 @@ async def _initialize_tables():
                 message_number INTEGER
             )
         """)
-        
+
+        # Ensure additional telemetry columns exist for websocket_messages
+        await conn.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'websocket_messages' AND column_name = 'latency_ms'
+                ) THEN
+                    ALTER TABLE websocket_messages ADD COLUMN latency_ms INTEGER;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'websocket_messages' AND column_name = 'format'
+                ) THEN
+                    ALTER TABLE websocket_messages ADD COLUMN format VARCHAR(50);
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'websocket_messages' AND column_name = 'extract_time'
+                ) THEN
+                    ALTER TABLE websocket_messages ADD COLUMN extract_time DECIMAL(10, 4);
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'websocket_messages' AND column_name = 'transform_time'
+                ) THEN
+                    ALTER TABLE websocket_messages ADD COLUMN transform_time DECIMAL(10, 4);
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'websocket_messages' AND column_name = 'load_time'
+                ) THEN
+                    ALTER TABLE websocket_messages ADD COLUMN load_time DECIMAL(10, 4);
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'websocket_messages' AND column_name = 'total_time'
+                ) THEN
+                    ALTER TABLE websocket_messages ADD COLUMN total_time DECIMAL(10, 4);
+                END IF;
+            END $$;
+        """)
+
         # Create indexes for websocket_messages
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_websocket_messages_timestamp 
@@ -322,8 +370,48 @@ async def _initialize_tables():
                 FOREIGN KEY (connector_id) REFERENCES api_connectors(connector_id) ON DELETE CASCADE
             )
         """)
-        
-        # Removed code for adding dropped columns
+
+        # Ensure new metric / tracing columns exist for api_connector_data
+        # These are used by save_to_database and /api/etl/active
+        await conn.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'api_connector_data' AND column_name = 'raw_response'
+                ) THEN
+                    ALTER TABLE api_connector_data ADD COLUMN raw_response JSONB;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'api_connector_data' AND column_name = 'status_code'
+                ) THEN
+                    ALTER TABLE api_connector_data ADD COLUMN status_code INTEGER;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'api_connector_data' AND column_name = 'response_time_ms'
+                ) THEN
+                    ALTER TABLE api_connector_data ADD COLUMN response_time_ms INTEGER;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'api_connector_data' AND column_name = 'source_id'
+                ) THEN
+                    ALTER TABLE api_connector_data ADD COLUMN source_id VARCHAR(100);
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'api_connector_data' AND column_name = 'session_id'
+                ) THEN
+                    ALTER TABLE api_connector_data ADD COLUMN session_id VARCHAR(100);
+                END IF;
+            END $$;
+        """)
         
         # Create indexes for api_connector_data
         await conn.execute("""
@@ -351,7 +439,76 @@ async def _initialize_tables():
                 FOREIGN KEY (connector_id) REFERENCES api_connectors(connector_id) ON DELETE CASCADE
             )
         """)
-        
+
+        # Ensure additional metric columns exist for api_connector_items
+        await conn.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'api_connector_items' AND column_name = 'market_cap'
+                ) THEN
+                    ALTER TABLE api_connector_items ADD COLUMN market_cap DECIMAL(20, 8);
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'api_connector_items' AND column_name = 'volume_24h'
+                ) THEN
+                    ALTER TABLE api_connector_items ADD COLUMN volume_24h DECIMAL(20, 8);
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'api_connector_items' AND column_name = 'price_change_24h'
+                ) THEN
+                    ALTER TABLE api_connector_items ADD COLUMN price_change_24h DECIMAL(20, 8);
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'api_connector_items' AND column_name = 'market_cap_rank'
+                ) THEN
+                    ALTER TABLE api_connector_items ADD COLUMN market_cap_rank INTEGER;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'api_connector_items' AND column_name = 'raw_item'
+                ) THEN
+                    ALTER TABLE api_connector_items ADD COLUMN raw_item JSONB;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'api_connector_items' AND column_name = 'item_index'
+                ) THEN
+                    ALTER TABLE api_connector_items ADD COLUMN item_index INTEGER;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'api_connector_items' AND column_name = 'response_time_ms'
+                ) THEN
+                    ALTER TABLE api_connector_items ADD COLUMN response_time_ms INTEGER;
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'api_connector_items' AND column_name = 'source_id'
+                ) THEN
+                    ALTER TABLE api_connector_items ADD COLUMN source_id VARCHAR(100);
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'api_connector_items' AND column_name = 'session_id'
+                ) THEN
+                    ALTER TABLE api_connector_items ADD COLUMN session_id VARCHAR(100);
+                END IF;
+            END $$;
+        """)
+
         # Create indexes for api_connector_items
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_api_connector_items_connector_id 
