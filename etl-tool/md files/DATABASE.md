@@ -128,42 +128,40 @@ CREATE TABLE api_connector_data (
     exchange VARCHAR(255),
     instrument VARCHAR(255),
     price NUMERIC(20, 8),
-    data JSONB,
-    raw_response TEXT,
-    message_type VARCHAR(100),
-    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    status_code INT,
-    response_time_ms INT,
-    FOREIGN KEY (connector_id) REFERENCES api_connectors(connector_id)
-);
-```
+    # Database Overview
 
-**Columns:**
-- `id` - Auto-increment primary key
-- `source_id` - Unique message ID
-- `connector_id` - Reference to api_connectors
-- `exchange` - Exchange name
-- `instrument` - Trading pair (e.g., "BTC/USDT")
-- `price` - Extracted price value
-- `data` - JSON response body
-- `raw_response` - Raw response text
-- `message_type` - Message type identifier
-- `timestamp` - When data was received
-- `status_code` - HTTP status code
-- `response_time_ms` - API response time in milliseconds
+    ## Technology
+    - PostgreSQL 13+
+    - Used for all ETL pipeline, connector, alert, and log storage
 
-**Sample Query:**
-```sql
--- Get latest prices
-SELECT connector_id, price, timestamp
-FROM api_connector_data
-WHERE connector_id = 'binance_prices'
-ORDER BY timestamp DESC
-LIMIT 10;
-```
+    ## Main Tables
+    - `api_connector_data`: Stores API data fetched by connectors
+    - `api_connector_items`: Individual items from API responses
+    - `pipeline_runs`: Tracks ETL pipeline runs
+    - `pipeline_steps`: Tracks steps (extract, clean, transform, load) for each run
+    - `alert_rules`: Alert configuration and recipients
+    - `alert_logs`: Log of triggered alerts and email status
 
-### 3. api_connector_items
+    ## Setup
+    - Environment variables set in `.env` or shell:
+    ```
+    POSTGRES_HOST=localhost
+    POSTGRES_PORT=5432
+    POSTGRES_USER=postgres
+    POSTGRES_PASSWORD=postgres
+    POSTGRES_DB=etl_tool
+    ```
+    - Database schema is bootstrapped automatically by backend (`database.py`)
 
+    ## Usage
+    - Backend connects via asyncpg/psycopg2
+    - All ETL, alert, and pipeline data is stored in PostgreSQL
+    - No manual schema creation required
+
+    ## Features
+    - Relational storage for ETL, alerts, and logs
+    - Supports parallel API jobs and real-time streaming
+    - Integrated with FastAPI backend
 **NEW TABLE** - Stores individual items extracted from API responses. This provides granular, queryable data instead of storing entire JSON blobs.
 
 ```sql

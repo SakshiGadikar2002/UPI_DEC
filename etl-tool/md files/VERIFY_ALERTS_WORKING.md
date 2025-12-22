@@ -1,3 +1,17 @@
+# Backend, Frontend, and Database Overview
+
+## Backend
+- FastAPI app, job scheduler, connectors, ETL helpers, alerting, and database access.
+- Main files: `main.py`, `database.py`, `requirements.txt`.
+- Modules: connectors, etl, job_scheduler, models, services, routes.
+
+## Frontend
+- React + Vite UI, real-time streaming charts, ETL pipeline viewer.
+- Main files: `index.html`, `src/main.jsx`, `src/App.jsx`, `src/components/`, `package.json`, `vite.config.js`.
+
+## Database
+- PostgreSQL 13+, schema bootstrapped by backend.
+- Main tables: `api_connector_data`, `api_connector_items`, `pipeline_runs`, `pipeline_steps`, `alert_rules`, `alert_logs`.
 # ✅ VERIFY ALERTS ARE WORKING - COMPLETE GUIDE
 
 ## YOUR ALERTS ARE 100% WORKING!

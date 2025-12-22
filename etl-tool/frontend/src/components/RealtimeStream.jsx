@@ -18,15 +18,9 @@ import {
   Bar,
   PieChart,
   Pie,
-  Cell,
-  RadarChart,
-  Radar,
-  PolarGrid,
-  PolarAngleAxis,
-  PolarRadiusAxis
+  Cell
 } from 'recharts';
 import './RealtimeStream.css';
-import { ChartIcon, ListIcon, CompareIcon, PlayIcon, StopIcon, ClearIcon, ExportIcon } from './Icons.jsx';
 import { OKX_CONFIG, BINANCE_CONFIG } from '../utils/websocketConfig';
 
 // Use relative URLs - works when frontend is served from same port as backend
@@ -2694,13 +2688,13 @@ const fillComparisonData = (dataPoints, symbols) => {
                               <div className="market-down-card-content">
                                 <div className="market-down-card-name">{cryptoInfo.name}</div>
                                 <div className="market-down-card-price">
-                                  ${formatPrice(item.price)}
+                                  ${item.price && item.price > 0 ? Number(item.price).toFixed(2) : 'N/A'}
                                 </div>
                                 <div className="market-down-card-change negative">
                                   <span className="change-arrow">▾</span> {
-                                    item.change1h < 0 ? formatPrice(Math.abs(item.change1h)) :
-                                    item.change6h < 0 ? formatPrice(Math.abs(item.change6h)) :
-                                    formatPrice(Math.abs(item.change12h))
+                                    item.change1h < 0 ? Math.abs(item.change1h).toFixed(2) :
+                                    item.change6h < 0 ? Math.abs(item.change6h).toFixed(2) :
+                                    Math.abs(item.change12h).toFixed(2)
                                   }%
                                 </div>
                               </div>
@@ -2876,30 +2870,30 @@ const fillComparisonData = (dataPoints, symbols) => {
                             </div>
                           </td>
                           <td className="price-cell">
-                            {item.price > 0 ? `$${formatPrice(item.price)}` : 'N/A'}
+                            {item.price > 0 ? `$${Number(item.price).toFixed(2)}` : 'N/A'}
                           </td>
                           <td className={`change-cell ${change1h >= 0 ? 'positive' : 'negative'}`}>
-                            {item.price > 0 ? (
+                            {item.price > 0 && change1h !== null && change1h !== undefined ? (
                               <>
-                                {change1h >= 0 ? '▲' : '▼'} {formatPrice(Math.abs(change1h))}
+                                {change1h >= 0 ? '▲' : '▼'} {Math.abs(change1h).toFixed(2)}%
                               </>
                             ) : (
                               'N/A'
                             )}
                           </td>
                           <td className={`change-cell ${change6h >= 0 ? 'positive' : 'negative'}`}>
-                            {item.price > 0 ? (
+                            {item.price > 0 && change6h !== null && change6h !== undefined ? (
                               <>
-                                {change6h >= 0 ? '▲' : '▼'} {formatPrice(Math.abs(change6h))}
+                                {change6h >= 0 ? '▲' : '▼'} {Math.abs(change6h).toFixed(2)}%
                               </>
                             ) : (
                               'N/A'
                             )}
                           </td>
                           <td className={`change-cell ${change12h >= 0 ? 'positive' : 'negative'}`}>
-                            {item.price > 0 ? (
+                            {item.price > 0 && change12h !== null && change12h !== undefined ? (
                               <>
-                                {change12h >= 0 ? '▲' : '▼'} {formatPrice(Math.abs(change12h))}
+                                {change12h >= 0 ? '▲' : '▼'} {Math.abs(change12h).toFixed(2)}%
                               </>
                             ) : (
                               'N/A'
@@ -2913,11 +2907,11 @@ const fillComparisonData = (dataPoints, symbols) => {
                               } else if (latency === null || latency === undefined) {
                                 return 'N/A';
                               }
-                              if (latency < 10000) {
-                                return `${Math.round(latency)}ms`;
-                              } else {
-                                return `${(latency / 1000).toFixed(1)}s`;
+                              // Cap latency at 10s (10000ms)
+                              if (latency > 10000) {
+                                return '> 10s';
                               }
+                              return `${Math.round(latency)}ms`;
                             })()}
                           </td>
                           <td className="graph-cell">
