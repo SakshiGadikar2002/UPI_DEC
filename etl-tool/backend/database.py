@@ -520,129 +520,7 @@ async def _initialize_tables():
         """)
         # Removed indexes related to dropped columns
         
-        # Create alert_rules table
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS alert_rules (
-                id SERIAL PRIMARY KEY,
-                name VARCHAR(255) NOT NULL UNIQUE,
-                alert_type VARCHAR(50) NOT NULL,
-                enabled BOOLEAN DEFAULT TRUE,
-                description TEXT,
-                symbol VARCHAR(50),
-                price_threshold DECIMAL(20, 8),
-                price_comparison VARCHAR(20),
-                notification_channels VARCHAR(50) DEFAULT 'email',
-                email_recipients TEXT,
-                severity VARCHAR(50) DEFAULT 'warning',
-                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
-            )
-        """)
-        
-        # Create indexes for alert_rules
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_alert_rules_alert_type 
-            ON alert_rules(alert_type)
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_alert_rules_enabled 
-            ON alert_rules(enabled)
-        """)
-        # Removed index related to dropped columns
-        
-        # Create alert_logs table (alert history)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS alert_logs (
-                id SERIAL PRIMARY KEY,
-                rule_id INTEGER NOT NULL,
-                alert_type VARCHAR(50) NOT NULL,
-                title VARCHAR(255) NOT NULL,
-                message TEXT NOT NULL,
-                severity VARCHAR(50) DEFAULT 'warning',
-                status VARCHAR(50) DEFAULT 'pending',
-                metadata JSONB,
-                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-                sent_at TIMESTAMP WITH TIME ZONE,
-                acknowledged_at TIMESTAMP WITH TIME ZONE,
-                FOREIGN KEY (rule_id) REFERENCES alert_rules(id) ON DELETE CASCADE
-            )
-        """)
-        
-        # Create indexes for alert_logs
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_alert_logs_rule_id 
-            ON alert_logs(rule_id)
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_alert_logs_alert_type 
-            ON alert_logs(alert_type)
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_alert_logs_severity 
-            ON alert_logs(severity)
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_alert_logs_status 
-            ON alert_logs(status)
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_alert_logs_created_at 
-            ON alert_logs(created_at DESC)
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_alert_logs_rule_created_at 
-            ON alert_logs(rule_id, created_at DESC)
-        """)
-        
-        # Create alert_tracking table (for cooldown and deduplication)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS alert_tracking (
-                id SERIAL PRIMARY KEY,
-                rule_id INTEGER NOT NULL UNIQUE,
-                last_alert_time TIMESTAMP WITH TIME ZONE,
-                alert_count_today INTEGER DEFAULT 0,
-                last_alert_date DATE,
-                FOREIGN KEY (rule_id) REFERENCES alert_rules(id) ON DELETE CASCADE
-            )
-        """)
-        
-        # Create indexes for alert_tracking
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_alert_tracking_rule_id 
-            ON alert_tracking(rule_id)
-        """)
-        
-        # Create notification_queue table (for retry mechanism)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS notification_queue (
-                id SERIAL PRIMARY KEY,
-                alert_id INTEGER NOT NULL,
-                channel VARCHAR(50) NOT NULL,
-                recipient VARCHAR(255),
-                status VARCHAR(50) DEFAULT 'pending',
-                retry_count INTEGER DEFAULT 0,
-                max_retries INTEGER DEFAULT 3,
-                error_message TEXT,
-                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-                last_retry_at TIMESTAMP WITH TIME ZONE,
-                sent_at TIMESTAMP WITH TIME ZONE,
-                FOREIGN KEY (alert_id) REFERENCES alert_logs(id) ON DELETE CASCADE
-            )
-        """)
-        
-        # Create indexes for notification_queue
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_notification_queue_alert_id 
-            ON notification_queue(alert_id)
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_notification_queue_status 
-            ON notification_queue(status)
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_notification_queue_created_at 
-            ON notification_queue(created_at DESC)
-        """)
+        # Alert-related tables removed (alert_rules, alert_logs, alert_tracking, notification_queue)
         
         # Create price_history table (for volatility calculation)
         await conn.execute("""
@@ -821,15 +699,6 @@ async def _initialize_tables():
             ON pipeline_steps(run_id)
         """)
 
-        # Initialize alert_tracking for any existing rules that don't have tracking entries
-        await conn.execute("""
-            INSERT INTO alert_tracking (rule_id, last_alert_time, alert_count_today)
-            SELECT id, NULL, 0
-            FROM alert_rules
-            WHERE id NOT IN (SELECT rule_id FROM alert_tracking)
-            ON CONFLICT (rule_id) DO NOTHING
-        """)
-        
         print("[OK] Initialized PostgreSQL tables with indexes")
 
 

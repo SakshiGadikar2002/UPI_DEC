@@ -21,11 +21,6 @@ import pandas as pd
 import shutil
 import time
 
-# Clear stale environment variables and reload from .env
-if 'SMTP_USE_TLS' in os.environ:
-    del os.environ['SMTP_USE_TLS']
-if 'SMTP_REQUIRE_AUTH' in os.environ:
-    del os.environ['SMTP_REQUIRE_AUTH']
 from dotenv import load_dotenv
 load_dotenv(override=True)
 import hashlib
@@ -54,11 +49,8 @@ from models.connector import (
 from services.encryption import get_encryption_service
 from services.connector_manager import get_connector_manager
 from services.message_processor import MessageProcessor
-from services.notification_service import EmailNotifier
 
 from job_scheduler import start_job_scheduler, stop_job_scheduler
-from job_scheduler.alert_scheduler import start_alert_scheduler, stop_alert_scheduler
-from routes.alerts import alert_router
 
 # --- Auto-insert scheduled API connectors if missing ---
 import asyncio as _asyncio
@@ -242,7 +234,6 @@ async def get_current_user(request: Request, token: str = Depends(oauth2_scheme)
 
 # Global scheduler references
 _job_scheduler = None
-_alert_scheduler = None
 
 
 @asynccontextmanager
@@ -272,28 +263,8 @@ async def lifespan(app: FastAPI):
             import traceback
             traceback.print_exc()
     
-    # Start alert scheduler
-    def start_alert_scheduler_later():
-        global _alert_scheduler
-        async def _start_alerts():
-            global _alert_scheduler
-            try:
-                scheduler = await start_alert_scheduler()
-                _alert_scheduler = scheduler
-                if scheduler:
-                    logger.info("[STARTUP] Alert scheduler initialized and running")
-                else:
-                    logger.error("[STARTUP] Alert scheduler failed to start")
-            except Exception as e:
-                logger.error(f"[STARTUP] Failed to start alert scheduler: {e}")
-                import traceback
-                traceback.print_exc()
-
-        asyncio.get_event_loop().create_task(_start_alerts())
-    
     # Run scheduler starts in the event loop after a brief delay to ensure app is ready
     asyncio.get_event_loop().call_soon(start_scheduler_later)
-    asyncio.get_event_loop().call_soon(start_alert_scheduler_later)
     
     yield
     
@@ -303,13 +274,6 @@ async def lifespan(app: FastAPI):
         logger.info("[SHUTDOWN] Job scheduler stopped successfully")
     except Exception as e:
         logger.error(f"[SHUTDOWN] Error stopping job scheduler: {e}")
-    
-    try:
-        if _alert_scheduler:
-            await stop_alert_scheduler(_alert_scheduler)
-            logger.info("[SHUTDOWN] Alert scheduler stopped successfully")
-    except Exception as e:
-        logger.error(f"[SHUTDOWN] Error stopping alert scheduler: {e}")
     
     await close_postgres_connection()
 
@@ -483,36 +447,6 @@ async def me(current_user=Depends(get_current_user)):
     )
 
 
-@app.post("/auth/test-alert")
-async def send_test_alert(request: Request, current_user=Depends(get_current_user)):
-    """Send a test email alert to the logged-in user"""
-    notifier = EmailNotifier()
-    recipient = current_user["email"]
-    subject = "[TEST] Alert delivery check"
-    body = (
-        "<p>This is a test alert from arithpipe.</p>"
-        "<p>If you received this, SMTP credentials are working.</p>"
-    )
-    success, error = notifier.send_email([recipient], subject, body, html=True)
-
-    client_ip = request.client.host if request.client else None
-    user_agent = request.headers.get("user-agent")
-    await log_user_event(
-        current_user["id"],
-        "test_alert",
-        ip_address=client_ip,
-        user_agent=user_agent,
-        metadata={"success": success, "error": error},
-    )
-
-    if not success:
-        raise HTTPException(status_code=500, detail=error or "Failed to send test email")
-
-    return {"status": "sent", "recipient": recipient}
-
-
-# Include alert routes (protected)
-app.include_router(alert_router, dependencies=[Depends(get_current_user)])
 
 # WebSocket connection manager for real-time UI updates
 class ConnectionManager:
@@ -3122,65 +3056,10 @@ if __name__ == "__main__":
     import asyncio as _asyncio
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run-one-check", action="store_true", help="Run a single alert check (fetch latest market data and send emails) then exit")
-    parser.add_argument("--send-test-email", action="store_true", help="Send a test email to configured alert recipients then exit")
     args = parser.parse_args()
 
-    if args.run_one_check:
-        async def _run_one_check():
-            try:
-                # Ensure DB connection is available
-                await connect_to_postgres()
-
-                # Initialize alert scheduler (which wires AlertManager)
-                from job_scheduler.alert_scheduler import AlertScheduler
-
-                sched = AlertScheduler()
-                await sched.initialize()
-
-                # Run a single alert check (will fetch websocket_messages and send emails)
-                await sched.run_alert_check()
-
-            except Exception as e:
-                logger.error(f"Error running one-shot alert check: {e}")
-            finally:
-                try:
-                    await close_postgres_connection()
-                except Exception:
-                    pass
-
-        _asyncio.run(_run_one_check())
-    elif args.send_test_email:
-        # Send a simple test email to verify mail functionality from main system
-        import os as _os
-        try:
-            recipients_str = _os.getenv("ALERT_EMAIL_RECIPIENTS", "aishwarya.sakharkar@arithwise.com")
-            recipients = [r.strip() for r in recipients_str.split(",") if r.strip()]
-            notifier = EmailNotifier()
-            subject = "arithpipe - Test Alert Email"
-            body = notifier.format_alert_email(
-                alert_message="Test: This is a test alert email from arithpipe",
-                alert_category="etl_system_alerts",
-                alert_reason="Connectivity and SMTP verification",
-                severity="warning",
-                metadata={"source": "main --send-test-email"}
-            )
-
-            success, err = notifier.send_email(recipients, subject, body, html=True)
-            if success:
-                print("✅ Test email sent successfully to:", recipients)
-                logger.info(f"Test email sent to {recipients}")
-            else:
-                print("❌ Test email failed:", err)
-                logger.error(f"Test email failed: {err}")
-        except Exception as e:
-            logger.error(f"Unexpected error sending test email: {e}")
-            print("❌ Unexpected error sending test email:", e)
-        finally:
-            try:
-                _asyncio.run(close_postgres_connection())
-            except Exception:
-                pass
+    if False:  # Placeholder for future command-line arguments
+        pass
     else:
         uvicorn.run(
             "main:app",

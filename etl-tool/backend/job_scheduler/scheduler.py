@@ -5,7 +5,6 @@ Saves results to database automatically on each interval
 """
 import asyncio
 import logging
-import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import Callable, Dict, List, Any
@@ -17,52 +16,8 @@ from database import (
     log_pipeline_step,
     start_pipeline_run,
 )
-from services.notification_service import EmailNotifier
 
 logger = logging.getLogger(__name__)
-
-# Email notification configuration for scheduled API failures
-EMAIL_RECIPIENTS = [
-    email.strip()
-    for email in (
-        os.getenv("ALERT_EMAIL_RECIPIENTS")
-        or os.getenv("SMTP_TO")
-        or os.getenv("SMTP_FROM_EMAIL")
-        or os.getenv("SMTP_USER")
-        or ""
-    ).split(",")
-    if email.strip()
-]
-_email_notifier = EmailNotifier()
-
-
-def _send_failure_email(api_id: str, api_name: str, status_code: Any, error_message: str) -> None:
-    """Send an email when a scheduled API run fails."""
-    if not EMAIL_RECIPIENTS:
-        return
-
-    subject = f"[ALERT] Scheduled API failed: {api_name}"
-    body = f"""
-    <html>
-        <body>
-            <h3>Scheduled API Failure</h3>
-            <p><strong>API:</strong> {api_name} ({api_id})</p>
-            <p><strong>Status:</strong> FAILED</p>
-            <p><strong>Status Code:</strong> {status_code}</p>
-            <p><strong>Error:</strong> {error_message}</p>
-            <p><strong>Timestamp (UTC):</strong> {datetime.utcnow().isoformat()}Z</p>
-        </body>
-    </html>
-    """
-
-    success, err = _email_notifier.send_email(
-        recipients=EMAIL_RECIPIENTS,
-        subject=subject,
-        body=body,
-        html=True,
-    )
-    if not success:
-        logger.warning(f"[JOB] Failed to send failure email: {err}")
 
 # List of non-realtime APIs to schedule
 # Each runs in parallel every SCHEDULE_INTERVAL_SECONDS
@@ -118,7 +73,7 @@ SCHEDULED_APIS = [
 ]
 
 # Schedule interval in seconds (all APIs run every N seconds)
-SCHEDULE_INTERVAL_SECONDS =  18000
+SCHEDULE_INTERVAL_SECONDS =  60
 # Max concurrent workers in thread pool
 MAX_WORKERS = 8
 
@@ -335,10 +290,6 @@ class JobScheduler:
             run_status = "failure"
             run_error = str(e)
         finally:
-            if run_status == "failure":
-                status_code = getattr(response, "status_code", "n/a")
-                _send_failure_email(api_id, api_name, status_code, run_error or "Unknown error")
-
             if pipeline_run_id:
                 try:
                     asyncio.run_coroutine_threadsafe(
