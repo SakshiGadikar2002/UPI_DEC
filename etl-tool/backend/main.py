@@ -49,6 +49,7 @@ from models.connector import (
 from services.encryption import get_encryption_service
 from services.connector_manager import get_connector_manager
 from services.message_processor import MessageProcessor
+from services.websocket_stream_manager import WebSocketStreamManager
 
 from job_scheduler import start_job_scheduler, stop_job_scheduler
 
@@ -486,7 +487,7 @@ class ConnectionManager:
 connection_manager = ConnectionManager()
 
 # Initialize message processor with callbacks
-async def save_api_items_to_database(connector_id: str, api_name: str, response_data: dict, response_time_ms: int):
+async def save_api_items_to_database(connector_id: str, api_name: str, response_data: Any, response_time_ms: int):
     """Save individual items from API response to api_connector_items table"""
     try:
         logger.info(f"[ITEMS] 🔄 Processing items for {connector_id} ({api_name})...")
@@ -545,6 +546,17 @@ async def save_api_items_to_database(connector_id: str, api_name: str, response_
                 logger.info(f"[ITEMS] ✅ Inserted {items_inserted} items from {api_name} ({connector_id})")
             else:
                 logger.warning(f"[ITEMS] ⚠️ No items inserted for {connector_id}")
+            
+            # Update visualization_data table for coingecko APIs
+            # This ensures visualization_data is updated when scheduler saves data
+            if connector_id in ["coingecko_top", "coingecko_global"]:
+                try:
+                    # Schedule visualization update in background
+                    loop = asyncio.get_event_loop()
+                    loop.create_task(update_visualization_data(connector_id, response_data, timestamp, response_data))
+                    logger.debug(f"[ITEMS] Scheduled visualization_data update for {connector_id}")
+                except Exception as viz_error:
+                    logger.warning(f"[ITEMS] Could not schedule visualization_data update for {connector_id}: {viz_error}")
     
     except Exception as e:
         logger.error(f"[ITEMS] ❌ Error saving API items: {e}")
@@ -700,6 +712,238 @@ def _extract_api_items(connector_id: str, response_data: dict) -> List[dict]:
         logger.warning(f"[DB] Error extracting items for {connector_id}: {e}")
     
     return items if items else [{"coin_name": connector_id, "coin_symbol": connector_id, "price": 0.0, "raw_item": response_data}]
+
+
+async def update_visualization_data(connector_id: str, data: Any, timestamp: datetime, raw_response: Any = None):
+    """
+    Update visualization_data table when new data arrives.
+    This ensures visualization_data is always up-to-date for real-time monitoring.
+    Uses the data parameter directly instead of querying the database again.
+    """
+    try:
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            # Handle coingecko_top (markets data)
+            if connector_id == "coingecko_top":
+                # Parse data if it's a string
+                if isinstance(data, str):
+                    try:
+                        data = json.loads(data)
+                    except:
+                        pass
+                
+                if isinstance(raw_response, str):
+                    try:
+                        raw_response = json.loads(raw_response)
+                    except:
+                        pass
+                
+                # Reconstruct coins list from the data we just saved
+                coins_list = []
+                
+                # Priority 1: data is a list (entire list stored in one row)
+                if isinstance(data, list):
+                    for item in data:
+                        if isinstance(item, dict) and (item.get("id") or item.get("symbol") or item.get("name") or item.get("current_price") is not None):
+                            coins_list.append(item)
+                
+                # Priority 2: data is a dict
+                elif isinstance(data, dict):
+                    # Check if this is a single coin object
+                    if data.get("id") or data.get("symbol") or data.get("name") or data.get("current_price") is not None:
+                        coins_list.append(data)
+                    # Check if data contains a nested list/array
+                    elif "data" in data and isinstance(data["data"], list):
+                        coins_list.extend([item for item in data["data"] if isinstance(item, dict)])
+                    # Check for other nested structures
+                    elif any(isinstance(v, list) for v in data.values()):
+                        for key, value in data.items():
+                            if isinstance(value, list):
+                                coins_list.extend([item for item in value if isinstance(item, dict) and (item.get("id") or item.get("symbol") or item.get("name"))])
+                                break
+                
+                # Priority 3: raw_response contains the data
+                if not coins_list and raw_response:
+                    if isinstance(raw_response, list):
+                        coins_list.extend([item for item in raw_response if isinstance(item, dict)])
+                    elif isinstance(raw_response, dict) and raw_response.get("id"):
+                        coins_list.append(raw_response)
+                
+                # If still no coins, try querying database as fallback
+                if not coins_list:
+                    logger.warning(f"[VIZ] No coins found in data, querying database as fallback for {connector_id}")
+                    from datetime import timedelta
+                    time_lower = timestamp - timedelta(seconds=2)
+                    time_upper = timestamp + timedelta(seconds=2)
+                    
+                    rows = await conn.fetch("""
+                        SELECT data, raw_response
+                        FROM api_connector_data
+                        WHERE connector_id = $1
+                        AND timestamp >= $2
+                        AND timestamp <= $3
+                        ORDER BY id
+                    """, connector_id, time_lower, time_upper)
+                    
+                    for row in rows:
+                        row_data = row["data"]
+                        row_raw = row.get("raw_response")
+                        
+                        if isinstance(row_data, str):
+                            try:
+                                row_data = json.loads(row_data)
+                            except:
+                                pass
+                        
+                        if isinstance(row_raw, str):
+                            try:
+                                row_raw = json.loads(row_raw)
+                            except:
+                                pass
+                        
+                        if isinstance(row_data, list):
+                            for item in row_data:
+                                if isinstance(item, dict) and (item.get("id") or item.get("symbol") or item.get("name")):
+                                    coins_list.append(item)
+                        elif isinstance(row_data, dict):
+                            if row_data.get("id") or row_data.get("symbol") or row_data.get("name") or row_data.get("current_price") is not None:
+                                coins_list.append(row_data)
+                            elif "data" in row_data and isinstance(row_data["data"], list):
+                                coins_list.extend([item for item in row_data["data"] if isinstance(item, dict)])
+                        elif row_raw:
+                            if isinstance(row_raw, list):
+                                coins_list.extend([item for item in row_raw if isinstance(item, dict)])
+                            elif isinstance(row_raw, dict) and row_raw.get("id"):
+                                coins_list.append(row_raw)
+                
+                if coins_list:
+                    # Save to visualization_data
+                    await conn.execute("""
+                        INSERT INTO visualization_data (data_type, timestamp, data, metadata, updated_at)
+                        VALUES ($1, $2, $3, $4, NOW())
+                        ON CONFLICT (data_type, timestamp) 
+                        DO UPDATE SET 
+                            data = EXCLUDED.data,
+                            metadata = EXCLUDED.metadata,
+                            updated_at = NOW()
+                    """, 
+                        "markets",
+                        timestamp,
+                        json.dumps(coins_list),
+                        json.dumps({"source": connector_id, "total_coins": len(coins_list)})
+                    )
+                    logger.info(f"✅ [VIZ] Updated visualization_data: markets ({len(coins_list)} coins) at {timestamp}")
+                    
+                    # Broadcast update via WebSocket for real-time frontend updates
+                    try:
+                        await connection_manager.broadcast({
+                            "type": "visualization_update",
+                            "data_type": "markets",
+                            "connector_id": connector_id,
+                            "timestamp": timestamp.isoformat(),
+                            "total_coins": len(coins_list),
+                            "message": "Market data updated"
+                        })
+                        logger.debug(f"✅ [VIZ] Broadcasted WebSocket update for markets")
+                    except Exception as ws_err:
+                        logger.warning(f"[VIZ] Could not broadcast visualization update: {ws_err}")
+                else:
+                    logger.warning(f"[VIZ] No coins found to save for {connector_id}")
+            
+            # Handle coingecko_global (global stats)
+            elif connector_id == "coingecko_global":
+                # Parse data if it's a string
+                if isinstance(data, str):
+                    try:
+                        data = json.loads(data)
+                    except:
+                        pass
+                
+                if isinstance(raw_response, str):
+                    try:
+                        raw_response = json.loads(raw_response)
+                    except:
+                        pass
+                
+                result = None
+                
+                # Try data field first
+                if isinstance(data, dict):
+                    result = data
+                # Try raw_response as fallback
+                elif raw_response and isinstance(raw_response, dict):
+                    result = raw_response
+                
+                # If still no result, query database as fallback
+                if not result:
+                    logger.warning(f"[VIZ] No data found, querying database as fallback for {connector_id}")
+                    row = await conn.fetchrow("""
+                        SELECT data, raw_response
+                        FROM api_connector_data
+                        WHERE connector_id = $1
+                        AND timestamp = $2
+                        LIMIT 1
+                    """, connector_id, timestamp)
+                    
+                    if row:
+                        viz_data = row["data"]
+                        row_raw = row.get("raw_response")
+                        
+                        if isinstance(viz_data, str):
+                            try:
+                                viz_data = json.loads(viz_data)
+                            except:
+                                pass
+                        
+                        if isinstance(row_raw, str):
+                            try:
+                                row_raw = json.loads(row_raw)
+                            except:
+                                pass
+                        
+                        result = viz_data if isinstance(viz_data, dict) else (row_raw if isinstance(row_raw, dict) else None)
+                
+                if result:
+                    # Normalize field names
+                    if "data" in result and isinstance(result["data"], dict):
+                        if "total_volume" in result["data"] and "total_volume_24h" not in result["data"]:
+                            result["data"]["total_volume_24h"] = result["data"]["total_volume"]
+                    elif "total_volume" in result and "total_volume_24h" not in result:
+                        result["total_volume_24h"] = result["total_volume"]
+                    
+                    # Save to visualization_data
+                    await conn.execute("""
+                        INSERT INTO visualization_data (data_type, timestamp, data, metadata, updated_at)
+                        VALUES ($1, $2, $3, $4, NOW())
+                        ON CONFLICT (data_type, timestamp) 
+                        DO UPDATE SET 
+                            data = EXCLUDED.data,
+                            metadata = EXCLUDED.metadata,
+                            updated_at = NOW()
+                    """, 
+                        "global_stats",
+                        timestamp,
+                        json.dumps(result),
+                        json.dumps({"source": connector_id})
+                    )
+                    logger.info(f"✅ [VIZ] Updated visualization_data: global_stats at {timestamp}")
+                    
+                    # Broadcast update via WebSocket for real-time frontend updates
+                    try:
+                        await connection_manager.broadcast({
+                            "type": "visualization_update",
+                            "data_type": "global_stats",
+                            "connector_id": connector_id,
+                            "timestamp": timestamp.isoformat(),
+                            "message": "Global stats updated"
+                        })
+                        logger.debug(f"✅ [VIZ] Broadcasted WebSocket update for global_stats")
+                    except Exception as ws_err:
+                        logger.warning(f"[VIZ] Could not broadcast visualization update: {ws_err}")
+                else:
+                    logger.warning(f"[VIZ] No global stats data found to save for {connector_id}")
+    except Exception as e:
+        logger.error(f"[VIZ] Failed to update visualization_data for {connector_id}: {e}", exc_info=True)
 
 
 async def save_to_database(message: dict):
@@ -873,6 +1117,18 @@ async def save_to_database(message: dict):
                 except Exception as items_error:
                     logger.warning(f"[DB] Could not schedule items save for manual API {connector_id}: {items_error}")
 
+            # Update visualization_data table in background for real-time updates
+            # This ensures visualization_data is always up-to-date when new data arrives
+            if connector_id in ["coingecko_top", "coingecko_global"]:
+                try:
+                    # Schedule visualization update in background (don't block main save)
+                    # Pass raw_response so we can use it if data is not in expected format
+                    loop = asyncio.get_event_loop()
+                    loop.create_task(update_visualization_data(connector_id, data, timestamp, raw_response))
+                    logger.debug(f"[DB] Scheduled visualization_data update for {connector_id}")
+                except Exception as viz_error:
+                    logger.error(f"[DB] Could not schedule visualization_data update for {connector_id}: {viz_error}", exc_info=True)
+
             # Return metadata (include all IDs so callers can log details/counts)
             return {
                 "ids": inserted_ids,
@@ -936,6 +1192,174 @@ connector_manager = get_connector_manager(message_processor)
 
 # ==================== Job Scheduler Setup ====================
 
+async def continuous_visualization_updater():
+    """
+    Background task that continuously updates visualization_data every 5 seconds.
+    This ensures frontend always has fresh data even if scheduler is slow.
+    """
+    await asyncio.sleep(5)  # Wait 5 seconds after startup before starting
+    
+    while True:
+        try:
+            pool = get_pool()
+            async with pool.acquire() as conn:
+                # Update markets data (coingecko_top)
+                latest_row = await conn.fetchrow("""
+                    SELECT timestamp
+                    FROM api_connector_data
+                    WHERE connector_id = 'coingecko_top'
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                """)
+                
+                if latest_row:
+                    latest_timestamp = latest_row["timestamp"]
+                    from datetime import timedelta
+                    time_lower = latest_timestamp - timedelta(seconds=2)
+                    time_upper = latest_timestamp + timedelta(seconds=2)
+                    
+                    rows = await conn.fetch("""
+                        SELECT data, raw_response, timestamp
+                        FROM api_connector_data
+                        WHERE connector_id = 'coingecko_top'
+                        AND timestamp >= $1
+                        AND timestamp <= $2
+                        ORDER BY id
+                    """, time_lower, time_upper)
+                    
+                    if rows:
+                        coins_list = []
+                        for row in rows:
+                            row_data = row["data"]
+                            row_raw = row.get("raw_response")
+                            
+                            if isinstance(row_data, str):
+                                try:
+                                    row_data = json.loads(row_data)
+                                except:
+                                    pass
+                            
+                            if isinstance(row_raw, str):
+                                try:
+                                    row_raw = json.loads(row_raw)
+                                except:
+                                    pass
+                            
+                            if isinstance(row_data, list):
+                                for item in row_data:
+                                    if isinstance(item, dict) and (item.get("id") or item.get("symbol") or item.get("name") or item.get("current_price") is not None):
+                                        coins_list.append(item)
+                            elif isinstance(row_data, dict):
+                                if row_data.get("id") or row_data.get("symbol") or row_data.get("name") or row_data.get("current_price") is not None:
+                                    coins_list.append(row_data)
+                                elif "data" in row_data and isinstance(row_data["data"], list):
+                                    coins_list.extend([item for item in row_data["data"] if isinstance(item, dict)])
+                            elif row_raw:
+                                if isinstance(row_raw, list):
+                                    coins_list.extend([item for item in row_raw if isinstance(item, dict)])
+                                elif isinstance(row_raw, dict) and row_raw.get("id"):
+                                    coins_list.append(row_raw)
+                        
+                        if coins_list:
+                            # Update visualization_data
+                            await conn.execute("""
+                                INSERT INTO visualization_data (data_type, timestamp, data, metadata, updated_at)
+                                VALUES ($1, $2, $3, $4, NOW())
+                                ON CONFLICT (data_type, timestamp) 
+                                DO UPDATE SET 
+                                    data = EXCLUDED.data,
+                                    metadata = EXCLUDED.metadata,
+                                    updated_at = NOW()
+                            """, 
+                                "markets",
+                                latest_timestamp,
+                                json.dumps(coins_list),
+                                json.dumps({"source": "coingecko_top", "total_coins": len(coins_list), "auto_update": True})
+                            )
+                            
+                            # Broadcast WebSocket update
+                            try:
+                                await connection_manager.broadcast({
+                                    "type": "visualization_update",
+                                    "data_type": "markets",
+                                    "connector_id": "coingecko_top",
+                                    "timestamp": latest_timestamp.isoformat(),
+                                    "total_coins": len(coins_list),
+                                    "message": "Market data updated (auto-refresh)"
+                                })
+                            except:
+                                pass
+                
+                # Update global stats (coingecko_global)
+                global_row = await conn.fetchrow("""
+                    SELECT data, raw_response, timestamp
+                    FROM api_connector_data
+                    WHERE connector_id = 'coingecko_global'
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                """)
+                
+                if global_row:
+                    viz_data = global_row["data"]
+                    raw_response = global_row.get("raw_response")
+                    timestamp = global_row["timestamp"]
+                    
+                    if isinstance(viz_data, str):
+                        try:
+                            viz_data = json.loads(viz_data)
+                        except:
+                            pass
+                    
+                    if isinstance(raw_response, str):
+                        try:
+                            raw_response = json.loads(raw_response)
+                        except:
+                            pass
+                    
+                    result = viz_data if isinstance(viz_data, dict) else (raw_response if isinstance(raw_response, dict) else None)
+                    
+                    if result:
+                        # Normalize field names
+                        if "data" in result and isinstance(result["data"], dict):
+                            if "total_volume" in result["data"] and "total_volume_24h" not in result["data"]:
+                                result["data"]["total_volume_24h"] = result["data"]["total_volume"]
+                        elif "total_volume" in result and "total_volume_24h" not in result:
+                            result["total_volume_24h"] = result["total_volume"]
+                        
+                        # Update visualization_data
+                        await conn.execute("""
+                            INSERT INTO visualization_data (data_type, timestamp, data, metadata, updated_at)
+                            VALUES ($1, $2, $3, $4, NOW())
+                            ON CONFLICT (data_type, timestamp) 
+                            DO UPDATE SET 
+                                data = EXCLUDED.data,
+                                metadata = EXCLUDED.metadata,
+                                updated_at = NOW()
+                        """, 
+                            "global_stats",
+                            timestamp,
+                            json.dumps(result),
+                            json.dumps({"source": "coingecko_global", "auto_update": True})
+                        )
+                        
+                        # Broadcast WebSocket update
+                        try:
+                            await connection_manager.broadcast({
+                                "type": "visualization_update",
+                                "data_type": "global_stats",
+                                "connector_id": "coingecko_global",
+                                "timestamp": timestamp.isoformat(),
+                                "message": "Global stats updated (auto-refresh)"
+                            })
+                        except:
+                            pass
+        except Exception as e:
+            logger.warning(f"[AUTO-UPDATE] Error in continuous visualization updater: {e}")
+        
+        # Wait 5 seconds before next update
+        await asyncio.sleep(5)
+
+
 @app.on_event("startup")
 async def startup_job_scheduler():
     """Start job scheduler on application startup."""
@@ -946,6 +1370,11 @@ async def startup_job_scheduler():
         await ensure_scheduled_connectors()
         _job_scheduler = start_job_scheduler(loop, save_to_database, save_api_items_to_database)
         logger.info("[STARTUP] Job scheduler initialized and running")
+        logger.info("[STARTUP] WebSocket Stream Manager initialized (persistence-first flow)")
+        
+        # Start continuous visualization updater (runs every 5 seconds)
+        asyncio.create_task(continuous_visualization_updater())
+        logger.info("[STARTUP] ✅ Continuous visualization updater started (updates every 5 seconds)")
     except Exception as e:
         logger.error(f"[STARTUP] Failed to start job scheduler: {e}")
         import traceback
@@ -954,18 +1383,24 @@ async def startup_job_scheduler():
 
 @app.on_event("shutdown")
 async def shutdown_job_scheduler():
-    """Stop job scheduler on application shutdown."""
+    """Stop job scheduler and WebSocket streams on application shutdown."""
     try:
         stop_job_scheduler()
         logger.info("[SHUTDOWN] Job scheduler stopped successfully")
     except Exception as e:
         logger.error(f"[SHUTDOWN] Error stopping job scheduler: {e}")
+    
+    try:
+        await websocket_stream_manager.shutdown()
+        logger.info("[SHUTDOWN] WebSocket Stream Manager shut down successfully")
+    except Exception as e:
+        logger.error(f"[SHUTDOWN] Error shutting down WebSocket Stream Manager: {e}")
 # ================================================================
 
 
 class ETLJobRequest(BaseModel):
     name: str
-    source_type: str  # "csv", "json", "api", "database"
+    source_type: str  # "csv", "json", "database" (api removed - pipeline only reads from database)
     source_config: Dict[str, Any]
     destination_type: str  # "csv", "json", "database"
     destination_config: Dict[str, Any]
@@ -1114,115 +1549,138 @@ async def get_binance_symbols():
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 
-# CoinGecko API Proxy Endpoints (to avoid CORS issues)
-COINGECKO_API_BASE = "https://api.coingecko.com/api/v3"
-# Rate limiting: track last request time
-_last_coingecko_request = {"time": 0}
-MIN_REQUEST_INTERVAL = 20.0  # Minimum 20 seconds between requests to avoid rate limiting
-# Response cache to reduce API calls
-_coingecko_cache = {
-    "markets": {"data": None, "timestamp": 0},
-    "global": {"data": None, "timestamp": 0}
-}
-# REDUCE cache duration for real-time accuracy - match frontend refresh interval
-CACHE_DURATION = 5  # Cache for only 5 seconds to ensure near real-time prices (matches frontend refresh)
+# CoinGecko Data Endpoints - Read from database (enforces API → Database → Backend → Frontend architecture)
+# All external API data must first be persisted by backend services (scheduler/connectors) before consumption
 
 
 @app.get("/api/crypto/global-stats")
 async def get_global_crypto_stats():
-    """Proxy endpoint to fetch global cryptocurrency market statistics from CoinGecko"""
+    """
+    Fetch global cryptocurrency market statistics from database.
+    Data must first be persisted by backend scheduler (connector_id: coingecko_global).
+    Enforces architecture: API → Database → Backend → Frontend
+    
+    Reads normalized rows from database and reconstructs the expected aggregated object format.
+    """
     try:
-        # Check cache first
-        current_time = time.time()
-        cache_entry = _coingecko_cache["global"]
-        if cache_entry["data"] and (current_time - cache_entry["timestamp"]) < CACHE_DURATION:
-            logger.info("Returning cached global stats")
-            return JSONResponse(content=cache_entry["data"])
+        pool = get_pool()
+        connector_id = "coingecko_global"
         
-        # Only wait for rate limit if we don't have valid cache
-        time_since_last = current_time - _last_coingecko_request["time"]
-        if time_since_last < MIN_REQUEST_INTERVAL:
-            # Return stale cache immediately instead of waiting
-            if cache_entry["data"]:
-                logger.info("Rate limited, returning stale cached global stats")
-                return JSONResponse(content=cache_entry["data"])
-            await asyncio.sleep(MIN_REQUEST_INTERVAL - time_since_last)
-        
-        _last_coingecko_request["time"] = time.time()
-        
-        # Retry logic with exponential backoff for 429 errors
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                response = requests.get(
-                    f"{COINGECKO_API_BASE}/global",
-                    timeout=8,  # Reduced from 15 to 8 seconds
-                    headers={"Accept": "application/json"}
+        async with pool.acquire() as conn:
+            # Try visualization_data table first (optimized for visualization)
+            viz_row = await conn.fetchrow("""
+                SELECT data, timestamp, metadata
+                FROM visualization_data
+                WHERE data_type = 'global_stats'
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """)
+            
+            if viz_row:
+                # Use visualization_data (already processed and ready)
+                data = viz_row["data"]
+                if isinstance(data, str):
+                    try:
+                        data = json.loads(data)
+                    except:
+                        pass
+                
+                logger.info(f"Returning global stats from visualization_data (timestamp: {viz_row['timestamp']})")
+                response = JSONResponse(content=data)
+                response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+                response.headers["Pragma"] = "no-cache"
+                response.headers["Expires"] = "0"
+                return response
+            
+            # Fallback to api_connector_data if visualization_data not available
+            # Get the most recent global stats data from database
+            # Global stats is stored as a single row with the full response
+            row = await conn.fetchrow("""
+                SELECT data, timestamp, raw_response
+                FROM api_connector_data
+                WHERE connector_id = $1
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """, connector_id)
+            
+            if not row:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No data found for {connector_id}. Ensure the scheduler is running and has fetched data."
+                )
+            
+            # Extract data from JSONB column - could be stored as dict or string
+            data = row["data"]
+            raw_response = row.get("raw_response")
+            
+            # Handle string JSON (if stored as string)
+            if isinstance(data, str):
+                try:
+                    import json
+                    data = json.loads(data)
+                except:
+                    pass
+            
+            if isinstance(raw_response, str):
+                try:
+                    import json
+                    raw_response = json.loads(raw_response)
+                except:
+                    pass
+            
+            # Reconstruct the expected format
+            result = None
+            
+            # Try data field first
+            if isinstance(data, dict):
+                result = data
+            # Try raw_response as fallback
+            elif raw_response and isinstance(raw_response, dict):
+                result = raw_response
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Unexpected data format in database - expected dict. "
+                           f"Found data type: {type(data).__name__}, raw_response type: {type(raw_response).__name__}"
                 )
                 
-                # Handle 429 rate limit errors
-                if response.status_code == 429:
-                    if attempt < max_retries - 1:
-                        backoff_delay = min(2 ** attempt * 5, 30)
-                        logger.warning(f"Rate limited (429). Retrying in {backoff_delay}s... (attempt {attempt + 1}/{max_retries})")
-                        await asyncio.sleep(backoff_delay)
-                        continue
-                    else:
-                        # Return cached data if available
-                        if cache_entry["data"]:
-                            logger.warning("Rate limited, returning stale cached data")
-                            return JSONResponse(content=cache_entry["data"])
-                        raise HTTPException(
-                            status_code=429,
-                            detail="Rate limit exceeded. Please try again later."
-                        )
+                # Normalize field names - CoinGecko uses 'total_volume' but frontend expects 'total_volume_24h'
+                if "data" in result and isinstance(result["data"], dict):
+                    if "total_volume" in result["data"] and "total_volume_24h" not in result["data"]:
+                        result["data"]["total_volume_24h"] = result["data"]["total_volume"]
+                elif "total_volume" in result and "total_volume_24h" not in result:
+                    result["total_volume_24h"] = result["total_volume"]
                 
-                response.raise_for_status()
-                data = response.json()
+            # Save to visualization_data table for easy monitoring
+            try:
+                await conn.execute("""
+                    INSERT INTO visualization_data (data_type, timestamp, data, metadata, updated_at)
+                    VALUES ($1, $2, $3, $4, NOW())
+                    ON CONFLICT (data_type, timestamp) 
+                    DO UPDATE SET 
+                        data = EXCLUDED.data,
+                        metadata = EXCLUDED.metadata,
+                        updated_at = NOW()
+                """, 
+                    "global_stats",
+                    row["timestamp"],
+                    json.dumps(result),
+                    json.dumps({"source": connector_id, "coins_count": None})
+                )
+                logger.debug(f"Saved global stats to visualization_data table")
+            except Exception as save_err:
+                logger.warning(f"Failed to save to visualization_data: {save_err}")
+            
+                logger.info(f"Returning global stats from database (timestamp: {row['timestamp']})")
+                return JSONResponse(content=result)
                 
-                # FIX: Normalize field names - CoinGecko uses 'total_volume' but frontend expects 'total_volume_24h'
-                if isinstance(data, dict) and "data" in data:
-                    if "total_volume" in data["data"] and "total_volume_24h" not in data["data"]:
-                        data["data"]["total_volume_24h"] = data["data"]["total_volume"]
-                elif isinstance(data, dict) and "total_volume" in data and "total_volume_24h" not in data:
-                    data["total_volume_24h"] = data["total_volume"]
-                
-                # Update cache
-                _coingecko_cache["global"] = {"data": data, "timestamp": time.time()}
-                return JSONResponse(content=data)
-                
-            except requests.exceptions.Timeout:
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)
-                    continue
-                # Return stale cache on timeout
-                if cache_entry["data"]:
-                    logger.warning("Timeout, returning stale cached data")
-                    return JSONResponse(content=cache_entry["data"])
-                raise HTTPException(status_code=504, detail="CoinGecko API timeout")
-            except requests.exceptions.HTTPError as e:
-                if e.response.status_code == 429 and attempt < max_retries - 1:
-                    backoff_delay = min(2 ** attempt * 5, 30)
-                    await asyncio.sleep(backoff_delay)
-                    continue
-                raise
-                
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error fetching global stats from CoinGecko: {e}")
-        # Return cached data if available
-        cache_entry = _coingecko_cache["global"]
-        if cache_entry["data"]:
-            logger.warning("Returning stale cached data due to error")
-            return JSONResponse(content=cache_entry["data"])
-        raise HTTPException(status_code=502, detail=f"Error fetching global stats: {str(e)}")
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Unexpected error in global stats: {e}")
-        # Return cached data if available
-        cache_entry = _coingecko_cache["global"]
-        if cache_entry["data"]:
-            logger.warning("Returning stale cached data due to unexpected error")
-            return JSONResponse(content=cache_entry["data"])
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+        logger.error(f"Error fetching global stats from database: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error fetching global stats: {str(e)}")
 
 
 @app.get("/api/crypto/markets")
@@ -1235,105 +1693,572 @@ async def get_crypto_markets(
     sparkline: bool = Query(False, description="Include sparkline data"),
     price_change_percentage: Optional[str] = Query(None, description="Price change percentages")
 ):
-    """Proxy endpoint to fetch cryptocurrency market data from CoinGecko"""
+    """
+    Fetch cryptocurrency market data from database.
+    Data must first be persisted by backend scheduler (connector_id: coingecko_top).
+    Enforces architecture: API → Database → Backend → Frontend.
+    
+    Reads normalized rows from database (one row per coin) and reconstructs the expected list format.
+    Backend handles grouping, ordering, limiting, and aggregating before responding.
+    """
     try:
-        # Check cache first (use a cache key based on parameters)
-        current_time = time.time()
-        cache_key = f"{ids}_{vs_currency}_{order}_{per_page}_{page}_{sparkline}_{price_change_percentage or ''}"
-        cache_entry = _coingecko_cache["markets"]
-        if cache_entry["data"] and (current_time - cache_entry["timestamp"]) < CACHE_DURATION:
-            logger.info("Returning cached market data")
-            return JSONResponse(content=cache_entry["data"])
+        pool = get_pool()
+        connector_id = "coingecko_top"
         
-        # Rate limiting: ensure minimum interval between requests
-        time_since_last = current_time - _last_coingecko_request["time"]
-        if time_since_last < MIN_REQUEST_INTERVAL:
-            await asyncio.sleep(MIN_REQUEST_INTERVAL - time_since_last)
-        
-        _last_coingecko_request["time"] = time.time()
-        
-        params = {
-            "vs_currency": vs_currency,
-            "ids": ids,
-            "order": order,
-            "per_page": per_page,
-            "page": page,
-            "sparkline": str(sparkline).lower()
-        }
-        
-        if price_change_percentage:
-            params["price_change_percentage"] = price_change_percentage
-        
-        # Retry logic with exponential backoff for 429 errors
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                response = requests.get(
-                    f"{COINGECKO_API_BASE}/coins/markets",
-                    params=params,
-                    timeout=15,
-                    headers={"Accept": "application/json"}
+        async with pool.acquire() as conn:
+            # Try visualization_data table first (optimized for visualization)
+            viz_row = await conn.fetchrow("""
+                SELECT data, timestamp, metadata
+                FROM visualization_data
+                WHERE data_type = 'markets'
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """)
+            
+            if viz_row:
+                # Use visualization_data (already processed and ready)
+                coins_list = viz_row["data"]
+                if isinstance(coins_list, str):
+                    try:
+                        coins_list = json.loads(coins_list)
+                    except:
+                        pass
+                
+                if isinstance(coins_list, list) and len(coins_list) > 0:
+                    latest_timestamp = viz_row["timestamp"]
+                    # Filter by requested coin IDs if provided
+                    if ids:
+                        requested_ids = [id.strip().lower() for id in ids.split(",")]
+                        coins_list = [
+                            coin for coin in coins_list
+                            if coin.get("id", "").lower() in requested_ids
+                        ]
+                    
+                    # Normalize field names
+                    for coin in coins_list:
+                        if isinstance(coin, dict):
+                            if "total_volume" in coin and "total_volume_24h" not in coin:
+                                coin["total_volume_24h"] = coin["total_volume"]
+                    
+                    # Apply sorting
+                    if order == "market_cap_desc":
+                        coins_list.sort(key=lambda x: x.get("market_cap", 0) or 0, reverse=True)
+                    elif order == "market_cap_asc":
+                        coins_list.sort(key=lambda x: x.get("market_cap", 0) or 0, reverse=False)
+                    elif order == "price_desc":
+                        coins_list.sort(key=lambda x: x.get("current_price", 0) or 0, reverse=True)
+                    elif order == "price_asc":
+                        coins_list.sort(key=lambda x: x.get("current_price", 0) or 0, reverse=False)
+                    
+                    # Apply pagination
+                    start_idx = (page - 1) * per_page
+                    end_idx = start_idx + per_page
+                    paginated_coins = coins_list[start_idx:end_idx]
+                    
+                    logger.info(f"Returning markets data from visualization_data (timestamp: {latest_timestamp}, coins: {len(coins_list)}, filtered: {len(paginated_coins)})")
+                    response = JSONResponse(content=paginated_coins)
+                    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+                    response.headers["Pragma"] = "no-cache"
+                    response.headers["Expires"] = "0"
+                    return response
+            
+            # Fallback to api_connector_data if visualization_data not available
+            # Get the most recent timestamp to find all rows from the same batch
+            latest_row = await conn.fetchrow("""
+                SELECT timestamp
+                FROM api_connector_data
+                WHERE connector_id = $1
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """, connector_id)
+            
+            if not latest_row:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No data found for {connector_id}. Ensure the scheduler is running and has fetched data."
                 )
+            
+            latest_timestamp = latest_row["timestamp"]
+            
+            # Get all rows from the most recent batch (within 1 second of latest timestamp)
+            # This handles the case where list items are saved as separate rows
+            # Calculate time bounds in Python to avoid PostgreSQL interval arithmetic issues
+            from datetime import timedelta
+            time_lower = latest_timestamp - timedelta(seconds=1)
+            time_upper = latest_timestamp + timedelta(seconds=1)
+            
+            rows = await conn.fetch("""
+                SELECT data, raw_response
+                FROM api_connector_data
+                WHERE connector_id = $1
+                AND timestamp >= $2
+                AND timestamp <= $3
+                ORDER BY id
+            """, connector_id, time_lower, time_upper)
+            
+            if not rows:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No data found for {connector_id}. Ensure the scheduler is running and has fetched data."
+                )
+            
+            # Reconstruct the list by extracting coin data from each row
+            # Handle both cases: 
+            # 1. Multiple rows (one coin per row) - normalized storage
+            # 2. Single row with full list in data field
+            coins_list = []
+            
+            for row in rows:
+                data = row["data"]
+                raw_response = row.get("raw_response")
                 
-                # Handle 429 rate limit errors
-                if response.status_code == 429:
-                    if attempt < max_retries - 1:
-                        backoff_delay = min(2 ** attempt * 5, 30)  # 5s, 10s, 20s, max 30s
-                        logger.warning(f"Rate limited (429). Retrying in {backoff_delay}s... (attempt {attempt + 1}/{max_retries})")
-                        await asyncio.sleep(backoff_delay)
+                # Handle string JSON (if stored as string)
+                if isinstance(data, str):
+                    try:
+                        data = json.loads(data)
+                    except:
+                        pass
+                
+                if isinstance(raw_response, str):
+                    try:
+                        raw_response = json.loads(raw_response)
+                    except:
+                        pass
+                
+                # Priority 1: data is a list (entire list stored in one row)
+                if isinstance(data, list):
+                    for item in data:
+                        if isinstance(item, dict):
+                            # Validate it's a coin object
+                            if item.get("id") or item.get("symbol") or item.get("name") or item.get("current_price") is not None:
+                                coins_list.append(item)
+                    continue
+                
+                # Priority 2: data is a dict
+                if isinstance(data, dict):
+                    # Check if this is a single coin object
+                    if data.get("id") or data.get("symbol") or data.get("name") or data.get("current_price") is not None:
+                        coins_list.append(data)
                         continue
-                    else:
-                        # Return cached data if available, otherwise raise error
-                        if cache_entry["data"]:
-                            logger.warning("Rate limited, returning stale cached data")
-                            return JSONResponse(content=cache_entry["data"])
-                        raise HTTPException(
-                            status_code=429,
-                            detail="Rate limit exceeded. Please try again later."
-                        )
+                    # Check if data contains a nested list/array
+                    elif "data" in data and isinstance(data["data"], list):
+                        for item in data["data"]:
+                            if isinstance(item, dict):
+                                coins_list.append(item)
+                        continue
+                    # Check for other nested structures
+                    elif any(isinstance(v, list) for v in data.values()):
+                        for key, value in data.items():
+                            if isinstance(value, list):
+                                for item in value:
+                                    if isinstance(item, dict) and (item.get("id") or item.get("symbol") or item.get("name")):
+                                        coins_list.append(item)
+                                break
+                        continue
+            
+                # Priority 3: raw_response contains the data
+                if raw_response:
+                    if isinstance(raw_response, list):
+                        for item in raw_response:
+                            if isinstance(item, dict) and (item.get("id") or item.get("symbol") or item.get("name") or item.get("current_price") is not None):
+                                coins_list.append(item)
+                        continue
+                    elif isinstance(raw_response, dict):
+                        # Check if it's a single coin
+                        if raw_response.get("id") or raw_response.get("symbol") or raw_response.get("name") or raw_response.get("current_price") is not None:
+                            coins_list.append(raw_response)
+                            continue
+                        # Check if it contains a list
+                        elif "data" in raw_response and isinstance(raw_response["data"], list):
+                            for item in raw_response["data"]:
+                                if isinstance(item, dict):
+                                    coins_list.append(item)
+                            continue
+                        # Check for nested lists
+                    elif any(isinstance(v, list) for v in raw_response.values()):
+                            for key, value in raw_response.items():
+                                if isinstance(value, list):
+                                    for item in value:
+                                        if isinstance(item, dict) and (item.get("id") or item.get("symbol") or item.get("name")):
+                                            coins_list.append(item)
+                                break
+                            continue
+            
+            if not coins_list or len(coins_list) == 0:
+                # Try to read from visualization_data table as fallback
+                try:
+                    viz_row = await conn.fetchrow("""
+                        SELECT data, timestamp
+                        FROM visualization_data
+                        WHERE data_type = 'markets'
+                        ORDER BY timestamp DESC
+                        LIMIT 1
+                    """)
+                    
+                    if viz_row and viz_row.get("data"):
+                        viz_data = viz_row["data"]
+                        if isinstance(viz_data, list):
+                            coins_list = viz_data
+                            logger.info(f"Using fallback: loaded {len(coins_list)} coins from visualization_data table")
+                        elif isinstance(viz_data, dict) and "data" in viz_data and isinstance(viz_data["data"], list):
+                            coins_list = viz_data["data"]
+                            logger.info(f"Using fallback: loaded {len(coins_list)} coins from visualization_data table")
+                except Exception as viz_err:
+                    logger.debug(f"Could not read from visualization_data: {viz_err}")
                 
-                response.raise_for_status()
-                data = response.json()
+                # If still no coins, log detailed error
+                if not coins_list or len(coins_list) == 0:
+                    # Log detailed information for debugging
+                    sample_data = None
+                    sample_raw = None
+                    data_type = None
+                    if rows:
+                        first_row = rows[0]
+                        data_type = type(first_row.get("data")).__name__
+                        data_val = first_row.get("data")
+                        if data_val:
+                            if isinstance(data_val, str):
+                                sample_data = data_val[:500]
+                            else:
+                                sample_data = str(data_val)[:500]
+                        raw_val = first_row.get("raw_response")
+                        if raw_val:
+                            if isinstance(raw_val, str):
+                                sample_raw = raw_val[:500]
+                            else:
+                                sample_raw = str(raw_val)[:500]
+                    
+                    logger.error(
+                        f"Could not reconstruct coins list for {connector_id}. "
+                        f"Found {len(rows)} rows but extracted 0 coins. "
+                        f"Data type: {data_type}, "
+                        f"Sample data preview: {sample_data}, "
+                        f"Sample raw_response preview: {sample_raw}"
+                    )
+                raise HTTPException(
+                    status_code=500,
+                        detail=f"Could not reconstruct coins list from database. "
+                               f"Found {len(rows)} rows but extracted 0 coins. "
+                               f"Data format may be unexpected. Check logs for details."
+                )
+            
+            # Filter by requested coin IDs if provided
+            if ids:
+                requested_ids = [id.strip().lower() for id in ids.split(",")]
+                coins_list = [
+                    coin for coin in coins_list
+                    if coin.get("id", "").lower() in requested_ids
+                ]
+            
+            # Normalize field names - CoinGecko uses 'total_volume' but frontend expects 'total_volume_24h'
+            for coin in coins_list:
+                if isinstance(coin, dict):
+                    if "total_volume" in coin and "total_volume_24h" not in coin:
+                        coin["total_volume_24h"] = coin["total_volume"]
+            
+            # Apply sorting
+            if order == "market_cap_desc":
+                coins_list.sort(key=lambda x: x.get("market_cap", 0) or 0, reverse=True)
+            elif order == "market_cap_asc":
+                coins_list.sort(key=lambda x: x.get("market_cap", 0) or 0, reverse=False)
+            elif order == "price_desc":
+                coins_list.sort(key=lambda x: x.get("current_price", 0) or 0, reverse=True)
+            elif order == "price_asc":
+                coins_list.sort(key=lambda x: x.get("current_price", 0) or 0, reverse=False)
+            
+            # Apply pagination
+            start_idx = (page - 1) * per_page
+            end_idx = start_idx + per_page
+            paginated_coins = coins_list[start_idx:end_idx]
+            
+            # Save full coins list to visualization_data table for easy monitoring
+            # Store the complete list (before pagination) for monitoring purposes
+            try:
+                await conn.execute("""
+                    INSERT INTO visualization_data (data_type, timestamp, data, metadata, updated_at)
+                    VALUES ($1, $2, $3, $4, NOW())
+                    ON CONFLICT (data_type, timestamp) 
+                    DO UPDATE SET 
+                        data = EXCLUDED.data,
+                        metadata = EXCLUDED.metadata,
+                        updated_at = NOW()
+                """, 
+                    "markets",
+                    latest_timestamp,
+                    json.dumps(coins_list),  # Store full list
+                    json.dumps({
+                        "source": connector_id,
+                        "total_coins": len(coins_list),
+                        "filtered_coins": len(paginated_coins),
+                        "page": page,
+                        "per_page": per_page
+                    })
+                )
+                logger.debug(f"Saved markets data to visualization_data table ({len(coins_list)} coins)")
+            except Exception as save_err:
+                logger.warning(f"Failed to save to visualization_data: {save_err}")
+            
+            logger.info(f"Returning markets data from database (timestamp: {latest_timestamp}, rows: {len(rows)}, coins: {len(coins_list)}, filtered: {len(paginated_coins)})")
+            return JSONResponse(content=paginated_coins)
                 
-                # FIX: Normalize field names - CoinGecko uses 'total_volume' but frontend expects 'total_volume_24h'
-                if isinstance(data, dict) and "data" in data:
-                    if "total_volume" in data["data"] and "total_volume_24h" not in data["data"]:
-                        data["data"]["total_volume_24h"] = data["data"]["total_volume"]
-                elif isinstance(data, dict) and "total_volume" in data and "total_volume_24h" not in data:
-                    data["total_volume_24h"] = data["total_volume"]
-                
-                # Update cache
-                _coingecko_cache["markets"] = {"data": data, "timestamp": time.time()}
-                return JSONResponse(content=data)
-                
-            except requests.exceptions.Timeout:
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)
-                    continue
-                raise HTTPException(status_code=504, detail="CoinGecko API timeout")
-            except requests.exceptions.HTTPError as e:
-                if e.response.status_code == 429 and attempt < max_retries - 1:
-                    backoff_delay = min(2 ** attempt * 5, 30)
-                    await asyncio.sleep(backoff_delay)
-                    continue
-                raise
-                
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error fetching markets from CoinGecko: {e}")
-        # Return cached data if available
-        cache_entry = _coingecko_cache["markets"]
-        if cache_entry["data"]:
-            logger.warning("Returning stale cached data due to error")
-            return JSONResponse(content=cache_entry["data"])
-        raise HTTPException(status_code=502, detail=f"Error fetching markets: {str(e)}")
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Unexpected error in markets: {e}")
-        # Return cached data if available
-        cache_entry = _coingecko_cache["markets"]
-        if cache_entry["data"]:
-            logger.warning("Returning stale cached data due to unexpected error")
-            return JSONResponse(content=cache_entry["data"])
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+        logger.error(f"Error fetching markets from database: {e}")
+        raise HTTPException(status_code=500, detail=f"Error fetching markets: {str(e)}")
+
+
+# Diagnostic endpoint to inspect raw data storage
+@app.get("/api/crypto/debug/{connector_id}")
+async def debug_connector_data(connector_id: str):
+    """
+    Debug endpoint to inspect how data is stored in the database.
+    Useful for troubleshooting data format issues.
+    """
+    try:
+        pool = get_pool()
+        
+        async with pool.acquire() as conn:
+            # Get the most recent rows
+            rows = await conn.fetch("""
+                SELECT id, timestamp, data, raw_response, 
+                       pg_typeof(data) as data_type,
+                       pg_typeof(raw_response) as raw_response_type
+                FROM api_connector_data
+                WHERE connector_id = $1
+                ORDER BY timestamp DESC
+                LIMIT 5
+            """, connector_id)
+            
+            if not rows:
+                return {
+                    "connector_id": connector_id,
+                    "message": "No data found",
+                    "rows": []
+                }
+            
+            result = []
+            for row in rows:
+                data = row["data"]
+                raw_response = row.get("raw_response")
+                
+                # Get type information
+                data_type = type(data).__name__
+                if isinstance(data, str):
+                    try:
+                        parsed = json.loads(data)
+                        data_type += f" (parses to {type(parsed).__name__})"
+                    except:
+                        data_type += " (invalid JSON)"
+                
+                result.append({
+                    "id": row["id"],
+                    "timestamp": row["timestamp"].isoformat() if row["timestamp"] else None,
+                    "data_type": data_type,
+                    "data_preview": str(data)[:200] if data else None,
+                    "data_is_list": isinstance(data, list),
+                    "data_is_dict": isinstance(data, dict),
+                    "data_is_string": isinstance(data, str),
+                    "raw_response_type": type(raw_response).__name__ if raw_response else None,
+                    "raw_response_preview": str(raw_response)[:200] if raw_response else None,
+                })
+            
+            return {
+                "connector_id": connector_id,
+                "total_rows": len(rows),
+                "rows": result
+            }
+    
+    except Exception as e:
+        logger.error(f"Error in debug endpoint: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Visualization Data Monitoring Endpoints
+@app.get("/api/visualization/data")
+async def get_visualization_data(
+    data_type: Optional[str] = Query(None, description="Filter by data type: 'markets' or 'global_stats'"),
+    limit: int = Query(10, description="Number of recent records to return"),
+    skip: int = Query(0, description="Number of records to skip")
+):
+    """
+    Get visualization data from the dedicated visualization_data table.
+    Useful for monitoring and debugging visualization data storage.
+    """
+    try:
+        pool = get_pool()
+        
+        async with pool.acquire() as conn:
+            query = """
+                SELECT id, data_type, timestamp, data, metadata, created_at, updated_at
+                FROM visualization_data
+            """
+            params = []
+            
+            if data_type:
+                query += " WHERE data_type = $1"
+                params.append(data_type)
+            
+            query += " ORDER BY timestamp DESC LIMIT $%d OFFSET $%d" % (len(params) + 1, len(params) + 2)
+            params.extend([limit, skip])
+            
+            rows = await conn.fetch(query, *params)
+            
+            # Get total count
+            count_query = "SELECT COUNT(*) FROM visualization_data"
+            if data_type:
+                count_query += " WHERE data_type = $1"
+                total_count = await conn.fetchval(count_query, data_type)
+            else:
+                total_count = await conn.fetchval(count_query)
+            
+            result = []
+            for row in rows:
+                result.append({
+                    "id": row["id"],
+                    "data_type": row["data_type"],
+                    "timestamp": row["timestamp"].isoformat() if row["timestamp"] else None,
+                    "data": row["data"],
+                    "metadata": row["metadata"],
+                    "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                    "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None
+                })
+            
+            return {
+                "success": True,
+                "data": result,
+                "total": total_count,
+                "limit": limit,
+                "skip": skip
+            }
+    
+    except Exception as e:
+        logger.error(f"Error fetching visualization data: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error fetching visualization data: {str(e)}")
+
+
+@app.post("/api/visualization/trigger-update")
+async def trigger_visualization_update(connector_id: str = "coingecko_top"):
+    """
+    Manually trigger visualization_data update for testing.
+    This endpoint reads the latest data from api_connector_data and updates visualization_data.
+    """
+    try:
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            if connector_id == "coingecko_top":
+                # Get latest timestamp
+                latest_row = await conn.fetchrow("""
+                    SELECT timestamp
+                    FROM api_connector_data
+                    WHERE connector_id = $1
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                """, connector_id)
+                
+                if not latest_row:
+                    raise HTTPException(status_code=404, detail=f"No data found for {connector_id}")
+                
+                latest_timestamp = latest_row["timestamp"]
+                from datetime import timedelta
+                time_lower = latest_timestamp - timedelta(seconds=2)
+                time_upper = latest_timestamp + timedelta(seconds=2)
+                
+                # Get all rows from latest batch
+                rows = await conn.fetch("""
+                    SELECT data, raw_response, timestamp
+                    FROM api_connector_data
+                    WHERE connector_id = $1
+                    AND timestamp >= $2
+                    AND timestamp <= $3
+                    ORDER BY id
+                """, connector_id, time_lower, time_upper)
+                
+                if not rows:
+                    raise HTTPException(status_code=404, detail=f"No rows found for {connector_id}")
+                
+                # Use the first row's data
+                first_row = rows[0]
+                data = first_row["data"]
+                raw_response = first_row.get("raw_response")
+                timestamp = first_row["timestamp"]
+                
+                # Trigger update
+                await update_visualization_data(connector_id, data, timestamp, raw_response)
+                
+                return {"status": "success", "message": f"Visualization data updated for {connector_id}", "rows_processed": len(rows)}
+            
+            elif connector_id == "coingecko_global":
+                row = await conn.fetchrow("""
+                    SELECT data, raw_response, timestamp
+                    FROM api_connector_data
+                    WHERE connector_id = $1
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                """, connector_id)
+                
+                if not row:
+                    raise HTTPException(status_code=404, detail=f"No data found for {connector_id}")
+                
+                await update_visualization_data(connector_id, row["data"], row["timestamp"], row.get("raw_response"))
+                
+                return {"status": "success", "message": f"Visualization data updated for {connector_id}"}
+            else:
+                raise HTTPException(status_code=400, detail=f"Unsupported connector_id: {connector_id}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error triggering visualization update: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/visualization/data/latest")
+async def get_latest_visualization_data(
+    data_type: str = Query(..., description="Data type: 'markets' or 'global_stats'")
+):
+    """
+    Get the most recent visualization data for a specific type.
+    """
+    try:
+        pool = get_pool()
+        
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT id, data_type, timestamp, data, metadata, created_at, updated_at
+                FROM visualization_data
+                WHERE data_type = $1
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """, data_type)
+            
+            if not row:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No visualization data found for type: {data_type}"
+                )
+            
+            return {
+                "success": True,
+                "data": {
+                    "id": row["id"],
+                    "data_type": row["data_type"],
+                    "timestamp": row["timestamp"].isoformat() if row["timestamp"] else None,
+                    "data": row["data"],
+                    "metadata": row["metadata"],
+                    "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                    "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None
+                }
+            }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching latest visualization data: {e}")
+        raise HTTPException(status_code=500, detail=f"Error fetching latest visualization data: {str(e)}")
 
 
 # PostgreSQL WebSocket Data Endpoints
@@ -1572,6 +2497,73 @@ async def save_websocket_message(message_data: Dict[str, Any]):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error saving message: {str(e)}")
+
+
+async def save_websocket_to_db(message: dict) -> Optional[Dict[str, Any]]:
+    """
+    Helper function to save WebSocket message to database (for use by WebSocket stream manager)
+    Returns database record with id, source_id, session_id, etc.
+    """
+    try:
+        pool = get_pool()
+        raw_data = message.get("data", {})
+        exchange = message.get("exchange", "custom")
+        instrument = message.get("instrument") or "-"
+        price = message.get("price") or 0.0
+        message_type = message.get("message_type", "trade")
+        timestamp_str = message.get("timestamp")
+        
+        # Parse timestamp
+        if timestamp_str:
+            try:
+                timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+            except:
+                timestamp = datetime.utcnow()
+        else:
+            timestamp = datetime.utcnow()
+        
+        # Generate source_id and session_id
+        import hashlib
+        source_id = hashlib.md5(f"{message.get('connector_id', 'unknown')}_{timestamp}_{json.dumps(raw_data)}".encode()).hexdigest()[:16]
+        session_id = message.get("session_id", str(uuid.uuid4()))
+        
+        async with pool.acquire() as conn:
+            inserted_id = await conn.fetchval("""
+                INSERT INTO websocket_messages (
+                    timestamp, exchange, instrument, price, data, message_type
+                ) VALUES ($1, $2, $3, $4, $5, $6)
+                RETURNING id
+            """,
+                timestamp,
+                exchange,
+                instrument,
+                price,
+                json.dumps(raw_data),
+                message_type
+            )
+            
+            return {
+                "id": inserted_id,
+                "source_id": source_id,
+                "session_id": session_id,
+                "connector_id": message.get("connector_id", "unknown"),
+                "timestamp": timestamp.isoformat(),
+                "exchange": exchange,
+                "instrument": instrument,
+                "price": price
+            }
+    except Exception as e:
+        logger.error(f"Error saving WebSocket message to database: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+# Initialize WebSocket Stream Manager (persistence-first)
+websocket_stream_manager = WebSocketStreamManager(
+    db_save_callback=save_websocket_to_db,
+    broadcast_callback=broadcast_to_websocket
+)
 
 
 @app.post("/api/websocket/save-batch")
@@ -2757,9 +3749,173 @@ async def get_connector_data(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ==================== WebSocket Stream Management Endpoints (Persistence-First) ====================
+
+class WebSocketConnectRequest(BaseModel):
+    exchange: str  # 'okx', 'binance', or 'custom'
+    websocket_url: Optional[str] = None
+    subscription_message: Optional[Dict[str, Any]] = None
+    channel: Optional[str] = None  # For OKX
+    inst_id: Optional[str] = None  # For OKX
+    symbol: Optional[str] = None  # For Binance
+    stream_type: Optional[str] = None  # For Binance
+
+
+@app.post("/api/websocket/connect")
+async def connect_websocket_stream(request: WebSocketConnectRequest):
+    """
+    Connect to external WebSocket stream with persistence-first flow.
+    All data is saved to database before being broadcast to frontend.
+    """
+    try:
+        connection_id = f"ws_{uuid.uuid4().hex[:12]}"
+        exchange = request.exchange.lower()
+        
+        # Determine WebSocket URL based on exchange
+        websocket_url = request.websocket_url
+        
+        if exchange == "okx":
+            if not websocket_url:
+                websocket_url = "wss://ws.okx.com:8443/ws/v5/public"
+            
+            # Build subscription message for OKX
+            subscription_message = request.subscription_message
+            if not subscription_message:
+                channel = request.channel or "trades"
+                inst_id = request.inst_id or "BTC-USDT"
+                
+                if inst_id == "ALL":
+                    # Cap to avoid oversized subscription
+                    inst_ids = [
+                        'BTC-USDT', 'ETH-USDT', 'BNB-USDT', 'SOL-USDT', 'XRP-USDT',
+                        'ADA-USDT', 'DOGE-USDT', 'MATIC-USDT', 'DOT-USDT', 'AVAX-USDT'
+                    ]
+                    subscription_message = {
+                        "op": "subscribe",
+                        "args": [{"channel": channel, "instId": inst} for inst in inst_ids]
+                    }
+                else:
+                    subscription_message = {
+                        "op": "subscribe",
+                        "args": [{"channel": channel, "instId": inst_id}]
+                    }
+        
+        elif exchange == "binance":
+            if not websocket_url:
+                symbol = request.symbol or "BTCUSDT"
+                stream_type = request.stream_type or "trade"
+                
+                if symbol == "ALL":
+                    # Use combined stream endpoint
+                    streams = [
+                        f"btcusdt@{stream_type}", f"ethusdt@{stream_type}",
+                        f"bnbusdt@{stream_type}", f"solusdt@{stream_type}",
+                        f"xrpusdt@{stream_type}"
+                    ]
+                    websocket_url = f"wss://stream.binance.com:9443/stream?streams={'/'.join(streams)}"
+                else:
+                    stream_name = f"{symbol.lower()}@{stream_type}"
+                    websocket_url = f"wss://stream.binance.com:9443/ws/{stream_name}"
+            
+            subscription_message = None  # Binance doesn't need subscription message
+        
+        elif exchange == "custom":
+            if not websocket_url:
+                raise HTTPException(status_code=400, detail="websocket_url is required for custom exchange")
+            subscription_message = request.subscription_message
+        
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported exchange: {exchange}")
+        
+        # Connect via WebSocket Stream Manager (persistence-first)
+        result = await websocket_stream_manager.connect(
+            connection_id=connection_id,
+            websocket_url=websocket_url,
+            exchange=exchange,
+            subscription_message=subscription_message,
+            channel=request.channel,
+            inst_id=request.inst_id,
+            symbol=request.symbol,
+            stream_type=request.stream_type
+        )
+        
+        if result.get("success"):
+            return {
+                "success": True,
+                "connection_id": connection_id,
+                "exchange": exchange,
+                "websocket_url": websocket_url,
+                "message": "WebSocket stream connected. Data will be persisted to database before visualization."
+            }
+        else:
+            raise HTTPException(status_code=500, detail=result.get("error", "Failed to connect"))
+    
+    except Exception as e:
+        logger.error(f"Error connecting WebSocket stream: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/websocket/disconnect/{connection_id}")
+async def disconnect_websocket_stream(connection_id: str):
+    """Disconnect external WebSocket stream"""
+    try:
+        result = await websocket_stream_manager.disconnect(connection_id)
+        
+        if result.get("success"):
+            return {
+                "success": True,
+                "connection_id": connection_id,
+                "message": "WebSocket stream disconnected"
+            }
+        else:
+            raise HTTPException(status_code=404, detail=result.get("error", "Connection not found"))
+    
+    except Exception as e:
+        logger.error(f"Error disconnecting WebSocket stream: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/websocket/connections")
+async def list_websocket_connections():
+    """List all active WebSocket stream connections"""
+    try:
+        connections = websocket_stream_manager.list_connections()
+        return {
+            "success": True,
+            "connections": connections,
+            "count": len(connections)
+        }
+    except Exception as e:
+        logger.error(f"Error listing WebSocket connections: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/websocket/connections/{connection_id}")
+async def get_websocket_connection_status(connection_id: str):
+    """Get status of a specific WebSocket stream connection"""
+    try:
+        status = websocket_stream_manager.get_connection_status(connection_id)
+        
+        if status:
+            return {
+                "success": True,
+                "connection": status
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Connection not found")
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting WebSocket connection status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.websocket("/api/realtime")
 async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket endpoint for real-time data updates to UI"""
+    """WebSocket endpoint for real-time data updates to UI (receives persisted data from backend)"""
     await connection_manager.connect(websocket)
     try:
         # Send initial connection message
@@ -3067,6 +4223,256 @@ async def download_file(file_id: str):
         )
     except Exception as e:
         logger.error(f"Error downloading file: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== API Gateway Observability Endpoints ====================
+
+@app.get("/api/gateway/telemetry")
+async def get_api_gateway_telemetry(
+    hours: int = Query(24, ge=1, le=168),  # Default 24 hours, max 7 days
+    connector_id: Optional[str] = None
+):
+    """
+    Get aggregated API telemetry data for the API Gateway dashboard.
+    Returns error rates, latency metrics, request volumes, and failure trends.
+    """
+    try:
+        pool = get_pool()
+        if pool is None:
+            raise HTTPException(status_code=500, detail="Database not connected")
+        
+        time_threshold = datetime.utcnow() - timedelta(hours=hours)
+        
+        async with pool.acquire() as conn:
+            # Base query conditions
+            connector_filter = "AND connector_id = $2" if connector_id else ""
+            params = [time_threshold]
+            if connector_id:
+                params.append(connector_id)
+            
+            # 1. Overall statistics
+            overall_stats_query = f"""
+                SELECT 
+                    COUNT(*) as total_requests,
+                    COUNT(CASE WHEN status_code >= 400 AND status_code < 500 THEN 1 END) as error_4xx,
+                    COUNT(CASE WHEN status_code >= 500 THEN 1 END) as error_5xx,
+                    AVG(response_time_ms) as avg_latency_ms,
+                    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY response_time_ms) as p50_latency_ms,
+                    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY response_time_ms) as p95_latency_ms,
+                    PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY response_time_ms) as p99_latency_ms,
+                    MIN(response_time_ms) as min_latency_ms,
+                    MAX(response_time_ms) as max_latency_ms
+                FROM api_connector_data
+                WHERE timestamp >= $1
+                {connector_filter}
+            """
+            
+            overall_stats = await conn.fetchrow(overall_stats_query, *params)
+            
+            # 2. Per-connector statistics
+            per_connector_query = f"""
+                SELECT 
+                    connector_id,
+                    COUNT(*) as request_count,
+                    COUNT(CASE WHEN status_code >= 400 AND status_code < 500 THEN 1 END) as error_4xx,
+                    COUNT(CASE WHEN status_code >= 500 THEN 1 END) as error_5xx,
+                    AVG(response_time_ms) as avg_latency_ms,
+                    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY response_time_ms) as p95_latency_ms,
+                    MAX(timestamp) as last_request_at
+                FROM api_connector_data
+                WHERE timestamp >= $1
+                {connector_filter}
+                GROUP BY connector_id
+                ORDER BY request_count DESC
+            """
+            
+            per_connector = await conn.fetch(per_connector_query, *params)
+            
+            # 3. Time-series data for trends (hourly buckets)
+            time_series_query = f"""
+                SELECT 
+                    DATE_TRUNC('hour', timestamp) as hour,
+                    COUNT(*) as request_count,
+                    COUNT(CASE WHEN status_code >= 400 AND status_code < 500 THEN 1 END) as error_4xx,
+                    COUNT(CASE WHEN status_code >= 500 THEN 1 END) as error_5xx,
+                    AVG(response_time_ms) as avg_latency_ms
+                FROM api_connector_data
+                WHERE timestamp >= $1
+                {connector_filter}
+                GROUP BY DATE_TRUNC('hour', timestamp)
+                ORDER BY hour ASC
+            """
+            
+            time_series = await conn.fetch(time_series_query, *params)
+            
+            # 4. Status code distribution
+            status_code_query = f"""
+                SELECT 
+                    status_code,
+                    COUNT(*) as count
+                FROM api_connector_data
+                WHERE timestamp >= $1 AND status_code IS NOT NULL
+                {connector_filter}
+                GROUP BY status_code
+                ORDER BY count DESC
+            """
+            
+            status_codes = await conn.fetch(status_code_query, *params)
+            
+            # 5. Recent failures (last 50)
+            failures_query = f"""
+                SELECT 
+                    connector_id,
+                    timestamp,
+                    status_code,
+                    response_time_ms,
+                    id
+                FROM api_connector_data
+                WHERE timestamp >= $1 AND status_code >= 400
+                {connector_filter}
+                ORDER BY timestamp DESC
+                LIMIT 50
+            """
+            
+            recent_failures = await conn.fetch(failures_query, *params)
+            
+            # 6. Pipeline run statistics
+            pipeline_stats_query = f"""
+                SELECT 
+                    COUNT(*) as total_runs,
+                    COUNT(CASE WHEN status = 'success' THEN 1 END) as successful_runs,
+                    COUNT(CASE WHEN status = 'failure' THEN 1 END) as failed_runs,
+                    COUNT(CASE WHEN status = 'running' THEN 1 END) as running_runs,
+                    AVG(EXTRACT(EPOCH FROM (completed_at - started_at)) * 1000) as avg_run_duration_ms
+                FROM pipeline_runs
+                WHERE started_at >= $1
+            """
+            
+            pipeline_params = [time_threshold]
+            pipeline_stats = await conn.fetchrow(pipeline_stats_query, *pipeline_params)
+            
+            # Format results
+            def format_row(row):
+                return dict(row) if row else {}
+            
+            return {
+                "overall": {
+                    "total_requests": overall_stats["total_requests"] or 0,
+                    "error_4xx": overall_stats["error_4xx"] or 0,
+                    "error_5xx": overall_stats["error_5xx"] or 0,
+                    "error_rate": (
+                        ((overall_stats["error_4xx"] or 0) + (overall_stats["error_5xx"] or 0)) / 
+                        max(overall_stats["total_requests"] or 1, 1) * 100
+                    ),
+                    "avg_latency_ms": float(overall_stats["avg_latency_ms"]) if overall_stats["avg_latency_ms"] else None,
+                    "p50_latency_ms": float(overall_stats["p50_latency_ms"]) if overall_stats["p50_latency_ms"] else None,
+                    "p95_latency_ms": float(overall_stats["p95_latency_ms"]) if overall_stats["p95_latency_ms"] else None,
+                    "p99_latency_ms": float(overall_stats["p99_latency_ms"]) if overall_stats["p99_latency_ms"] else None,
+                    "min_latency_ms": overall_stats["min_latency_ms"],
+                    "max_latency_ms": overall_stats["max_latency_ms"],
+                },
+                "per_connector": [
+                    {
+                        "connector_id": row["connector_id"],
+                        "request_count": row["request_count"],
+                        "error_4xx": row["error_4xx"] or 0,
+                        "error_5xx": row["error_5xx"] or 0,
+                        "error_rate": (
+                            ((row["error_4xx"] or 0) + (row["error_5xx"] or 0)) / 
+                            max(row["request_count"], 1) * 100
+                        ),
+                        "avg_latency_ms": float(row["avg_latency_ms"]) if row["avg_latency_ms"] else None,
+                        "p95_latency_ms": float(row["p95_latency_ms"]) if row["p95_latency_ms"] else None,
+                        "last_request_at": row["last_request_at"].isoformat() if row["last_request_at"] else None,
+                    }
+                    for row in per_connector
+                ],
+                "time_series": [
+                    {
+                        "hour": row["hour"].isoformat() if row["hour"] else None,
+                        "request_count": row["request_count"],
+                        "error_4xx": row["error_4xx"] or 0,
+                        "error_5xx": row["error_5xx"] or 0,
+                        "avg_latency_ms": float(row["avg_latency_ms"]) if row["avg_latency_ms"] else None,
+                    }
+                    for row in time_series
+                ],
+                "status_codes": [
+                    {
+                        "status_code": row["status_code"],
+                        "count": row["count"],
+                    }
+                    for row in status_codes
+                ],
+                "recent_failures": [
+                    {
+                        "connector_id": row["connector_id"],
+                        "timestamp": row["timestamp"].isoformat() if row["timestamp"] else None,
+                        "status_code": row["status_code"],
+                        "response_time_ms": row["response_time_ms"],
+                        "id": row["id"],
+                    }
+                    for row in recent_failures
+                ],
+                "pipeline_stats": {
+                    "total_runs": pipeline_stats["total_runs"] or 0,
+                    "successful_runs": pipeline_stats["successful_runs"] or 0,
+                    "failed_runs": pipeline_stats["failed_runs"] or 0,
+                    "running_runs": pipeline_stats["running_runs"] or 0,
+                    "success_rate": (
+                        (pipeline_stats["successful_runs"] or 0) / 
+                        max(pipeline_stats["total_runs"] or 1, 1) * 100
+                    ),
+                    "avg_run_duration_ms": float(pipeline_stats["avg_run_duration_ms"]) if pipeline_stats["avg_run_duration_ms"] else None,
+                },
+                "time_range_hours": hours,
+            }
+    except Exception as e:
+        logger.error(f"[API GATEWAY] Failed to get telemetry: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/gateway/connectors")
+async def get_api_gateway_connectors():
+    """
+    Get list of all API connectors with basic metadata for the API Gateway dashboard.
+    """
+    try:
+        pool = get_pool()
+        if pool is None:
+            raise HTTPException(status_code=500, detail="Database not connected")
+        
+        async with pool.acquire() as conn:
+            connectors = await conn.fetch("""
+                SELECT 
+                    connector_id,
+                    name,
+                    api_url,
+                    http_method,
+                    status,
+                    created_at,
+                    updated_at
+                FROM api_connectors
+                ORDER BY name ASC
+            """)
+            
+            return [
+                {
+                    "connector_id": row["connector_id"],
+                    "name": row["name"],
+                    "api_url": row["api_url"],
+                    "http_method": row["http_method"],
+                    "status": row["status"],
+                    "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                    "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+                }
+                for row in connectors
+            ]
+    except Exception as e:
+        logger.error(f"[API GATEWAY] Failed to get connectors: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

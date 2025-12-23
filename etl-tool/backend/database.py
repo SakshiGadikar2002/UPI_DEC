@@ -690,6 +690,31 @@ async def _initialize_tables():
             ON pipeline_steps(run_id)
         """)
 
+        # Create visualization_data table for processed visualization data
+        # This table stores aggregated data specifically for visualization/monitoring
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS visualization_data (
+                id SERIAL PRIMARY KEY,
+                data_type VARCHAR(50) NOT NULL,  -- 'markets' or 'global_stats'
+                timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                data JSONB NOT NULL,  -- Processed data ready for visualization
+                metadata JSONB,  -- Additional metadata (coin count, etc.)
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                UNIQUE(data_type, timestamp)  -- One record per data_type per timestamp
+            )
+        """)
+
+        # Create indexes for visualization_data
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_visualization_data_type_timestamp
+            ON visualization_data(data_type, timestamp DESC)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_visualization_data_timestamp
+            ON visualization_data(timestamp DESC)
+        """)
+
         print("[OK] Initialized PostgreSQL tables with indexes")
 
 

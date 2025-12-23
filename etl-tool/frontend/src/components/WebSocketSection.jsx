@@ -5,6 +5,7 @@ import { removeDuplicates } from '../utils/duplicateRemover'
 import { OKX_CONFIG, BINANCE_CONFIG } from '../utils/websocketConfig'
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area } from 'recharts'
 import RealtimeStream from './RealtimeStream'
+import { getRealtimeWebSocket } from '../utils/realtimeWebSocket'
 
 function WebSocketSection({ data, setData }) {
   const [wsUrl, setWsUrl] = useState('')
@@ -29,6 +30,8 @@ function WebSocketSection({ data, setData }) {
   const [activeView, setActiveView] = useState('stream') // 'stream' or 'dashboard'
   const [isRealtime, setIsRealtime] = useState(false) // Track if WebSocket is real-time
   const messageTimestampsRef = useRef([]) // Track message timestamps for real-time detection
+  const [connectionId, setConnectionId] = useState(null) // Backend connection ID
+  const backendWsRef = useRef(null) // Backend WebSocket connection for receiving persisted data
   const [throughputData, setThroughputData] = useState([]) // Messages per second over time
   const [latencyData, setLatencyData] = useState([]) // Latency per message
   const [scalabilityData, setScalabilityData] = useState([]) // Cumulative metrics

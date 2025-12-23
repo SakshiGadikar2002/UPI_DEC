@@ -34,83 +34,21 @@ Object.entries(TRACKED_CRYPTO_IDS).forEach(([symbol, id]) => {
 });
 
 /**
- * Fetch market data from CoinGecko
- * Returns data in format compatible with RealtimeStream component
+ * DEPRECATED: fetchGlobalCryptoMarketData
+ * 
+ * This function has been removed to enforce architecture:
+ * API → Database → Pipeline → Backend → Frontend
+ * 
+ * All API calls must go through backend endpoints that read from database.
+ * Use fetchDetailedMarketData() instead, which calls backend endpoints.
  */
 export const fetchGlobalCryptoMarketData = async () => {
-  try {
-    const ids = Object.values(TRACKED_CRYPTO_IDS).join(',');
-    
-    // Fetch market data with price, 24h change, volume, etc.
-    // Note: CoinGecko uses 'usd' not 'usdt' as the base currency
-    const response = await fetch(
-      `${COINGECKO_API_BASE}/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true&include_last_updated_at=true`
-    );
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      let errorMessage = `CoinGecko API error: ${response.status}`;
-      try {
-        const errorData = JSON.parse(errorText);
-        errorMessage = errorData.error || errorMessage;
-      } catch (e) {
-        errorMessage = errorText || errorMessage;
-      }
-      throw new Error(errorMessage);
-    }
-    
-    const data = await response.json();
-    
-    // Transform CoinGecko data to format compatible with RealtimeStream
-    const transformedData = [];
-    
-    Object.entries(data).forEach(([id, priceData]) => {
-      const symbol = ID_TO_SYMBOL[id];
-      if (!symbol) return;
-      
-      const price = priceData.usd || 0;
-      const change24h = priceData.usd_24h_change || 0;
-      const volume24h = priceData.usd_24h_vol || 0;
-      const lastUpdated = priceData.last_updated_at || Date.now() / 1000;
-      
-      // Transform to OKX-like format that RealtimeStream understands
-      // This format matches what RealtimeStream expects: { arg: {...}, data: [...] }
-      transformedData.push({
-        arg: {
-          channel: 'tickers',
-          instId: symbol.replace('USDT', '-USDT') // BTCUSDT -> BTC-USDT
-        },
-        data: [{
-          instId: symbol.replace('USDT', '-USDT'),
-          last: price.toString(),
-          px: price.toString(), // Primary price field for RealtimeStream
-          p: price.toString(), // Alternative price field
-          lastSz: '0',
-          askPx: (price * 1.001).toFixed(2), // Simulated ask price
-          askSz: '0',
-          bidPx: (price * 0.999).toFixed(2), // Simulated bid price
-          bidSz: '0',
-          open24h: (price / (1 + change24h / 100)).toFixed(2),
-          high24h: (price * 1.1).toFixed(2), // Simulated high
-          low24h: (price * 0.9).toFixed(2), // Simulated low
-          vol24h: volume24h.toString(),
-          volCcy24h: (volume24h * price).toString(),
-          ts: (lastUpdated * 1000).toString(), // Convert to milliseconds
-          change24h: change24h.toString(),
-          // Additional fields for compatibility
-          sz: '0',
-          tradeId: Date.now().toString(),
-          side: 'buy',
-          timestamp: lastUpdated * 1000
-        }]
-      });
-    });
-    
-    return transformedData;
-  } catch (error) {
-    console.error('Error fetching global crypto market data:', error);
-    throw error;
-  }
+  throw new Error(
+    'fetchGlobalCryptoMarketData is deprecated. ' +
+    'All API calls must go through backend endpoints that read from database. ' +
+    'Use fetchDetailedMarketData() instead, which follows the architecture: ' +
+    'API → Database → Backend → Frontend'
+  );
 };
 
 /**
@@ -152,13 +90,15 @@ export const fetchDetailedMarketData = async (retryCount = 0, maxRetries = 3) =>
   try {
     const ids = Object.values(TRACKED_CRYPTO_IDS).join(',');
     
-    // REMOVE cache-busting timestamp - backend cache will handle freshness
     // Make BOTH API calls in PARALLEL to cut load time in half
+    // Force no-cache to avoid browser caching stale responses
+    const fetchOptions = { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } };
     const [coinsResponse, globalStatsResponse] = await Promise.all([
       fetch(
-        `${API_BASE_URL}/api/crypto/markets?vs_currency=usd&ids=${ids}&order=market_cap_desc&per_page=20&page=1&sparkline=true&price_change_percentage=1h%2C24h%2C7d`
+        `${API_BASE_URL}/api/crypto/markets?vs_currency=usd&ids=${ids}&order=market_cap_desc&per_page=20&page=1&sparkline=true&price_change_percentage=1h%2C24h%2C7d`,
+        fetchOptions
       ),
-      fetch(`${API_BASE_URL}/api/crypto/global-stats`).catch(e => {
+      fetch(`${API_BASE_URL}/api/crypto/global-stats`, fetchOptions).catch(e => {
         // Don't fail if global stats fails - it's optional
         console.warn('Global stats fetch error (non-critical):', e);
         return { ok: false };

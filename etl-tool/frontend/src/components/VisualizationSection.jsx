@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef, useCallback, memo } from 'react'
 import './Section.css'
 import { fetchDetailedMarketData } from '../utils/cryptoMarketData'
+import { getRealtimeWebSocket } from '../utils/realtimeWebSocket'
 
 // Import RealtimeStream directly so the visualization shell appears instantly
 // without waiting for a lazy-loaded bundle.
 import RealtimeStream from './RealtimeStream'
 
-// Refresh interval: 5 seconds for near real-time market data updates
+// Refresh interval: 5 seconds for real-time market data updates (like CoinMarketCap/CoinGecko)
 const REFRESH_INTERVAL = 5000
 
 function VisualizationSection() {
@@ -23,9 +24,9 @@ function VisualizationSection() {
   const isFirstFetchRef = useRef(true) // Track if this is the first fetch
 
   // Optimized fetch function with debouncing to prevent concurrent requests
-  const fetchData = useCallback(async () => {
-    // Prevent concurrent fetches
-    if (isFetchingRef.current) {
+  const fetchData = useCallback(async (force = false) => {
+    // Prevent concurrent fetches, but allow forced updates (from WebSocket)
+    if (isFetchingRef.current && !force) {
       console.log('Fetch already in progress, skipping...')
       return
     }
@@ -63,69 +64,88 @@ function VisualizationSection() {
       
       // Transform to format expected by RealtimeStream
       const now = Date.now()
-      setMarketData(prevData => {
-        try {
-          // Preserve connection metadata across updates
-          const connectionTime = prevData?.connectionTime || connectionStartTimeRef.current
-          const firstMessageTime = prevData?.firstMessageTime || connectionStartTimeRef.current
-          
-          // Calculate accurate message rate (updates every 5 seconds = 0.2 msg/s)
-          const messagesPerSecond = 1 / (REFRESH_INTERVAL / 1000)
-          
-          const transformedData = {
-            source: 'Global Crypto Market',
-            url: 'https://api.coingecko.com/api/v3',
-            mode: 'Realtime',
-            data: coinsData,
-            globalStats: globalStats, // Include global market stats
-            totalRows: coinsData.length,
-            duplicateCount: 0,
-            totalMessages: messageCountRef.current,
-            messagesPerSecond: messagesPerSecond,
-            transformed: coinsData.length,
-            timestamp: new Date().toISOString(),
-            messages: [], // Will be set below
-            dataFormat: 'Global Market Data',
-            connectionTime: connectionTime,
-            firstMessageTime: firstMessageTime,
-            currentMessageRate: messagesPerSecond,
-            uptime: Math.floor((now - connectionTime) / 1000),
-            timingData: [],
-            isRealtime: true,
-            latencyData: [],
-            throughputData: [],
-            exchange: 'global' // Use 'global' instead of 'okx', 'binance', or 'custom'
-          }
-
-          // Create synthetic messages for each update (keep last 10 to reduce memory)
-          const syntheticMessage = {
-            type: 'data',
-            data: coinsData[0] || {}, // Use first item as sample, fallback to empty object
-            timestamp: new Date(now),
-            format: 'Global Market Data',
-            messageNumber: messageCountRef.current,
-            extractTime: 0.5,
-            transformTime: 0.1,
-            loadTime: 0.05,
-            totalTime: 0.65,
-            exchange: 'global'
-          }
-          
-          // Keep only last 10 messages to prevent memory issues
-          messagesRef.current = [syntheticMessage, ...messagesRef.current].slice(0, 10)
-          transformedData.messages = messagesRef.current
-
-          return transformedData
-        } catch (transformError) {
-          console.error('Error transforming data:', transformError)
-          // Return previous data if transformation fails
-          return prevData
-        }
-      })
       
+      // Force update by always creating a new object reference
+      // This ensures React detects changes even if prices are similar
+      const connectionTime = marketData?.connectionTime || connectionStartTimeRef.current
+      const firstMessageTime = marketData?.firstMessageTime || connectionStartTimeRef.current
+      
+      // Calculate accurate message rate (updates every 3 seconds = 0.33 msg/s)
+      const messagesPerSecond = 1 / (REFRESH_INTERVAL / 1000)
+      
+      // Create synthetic messages for each update (keep last 10 to reduce memory)
+      const syntheticMessage = {
+        type: 'data',
+        data: coinsData[0] || {}, // Use first item as sample, fallback to empty object
+        timestamp: new Date(now),
+        format: 'Global Market Data',
+        messageNumber: messageCountRef.current,
+        extractTime: 0.5,
+        transformTime: 0.1,
+        loadTime: 0.05,
+        totalTime: 0.65,
+        exchange: 'global'
+      }
+      
+      // Keep only last 10 messages to prevent memory issues
+      messagesRef.current = [syntheticMessage, ...messagesRef.current].slice(0, 10)
+      
+      // Always create a NEW object to force React re-render
+      // This ensures prices update even if they're similar values
+      const transformedData = {
+        source: 'Global Crypto Market',
+        url: 'https://api.coingecko.com/api/v3',
+        mode: 'Realtime',
+        data: coinsData, // Always use fresh data array
+        globalStats: globalStats ? {...globalStats} : null, // Create new object reference
+        totalRows: coinsData.length,
+        duplicateCount: 0,
+        totalMessages: messageCountRef.current,
+        messagesPerSecond: messagesPerSecond,
+        transformed: coinsData.length,
+        timestamp: new Date().toISOString(), // Always new timestamp
+        messages: [...messagesRef.current], // New array reference
+        dataFormat: 'Global Market Data',
+        connectionTime: connectionTime,
+        firstMessageTime: firstMessageTime,
+        currentMessageRate: messagesPerSecond,
+        uptime: Math.floor((now - connectionTime) / 1000),
+        timingData: [],
+        isRealtime: true,
+        latencyData: [],
+        throughputData: [],
+        exchange: 'global',
+        _updateKey: now // Force update with unique key
+      }
+      
+      // Log price changes for debugging and force updates
+      if (marketData && marketData.data && marketData.data.length > 0 && coinsData.length > 0) {
+        // Compare prices to detect changes
+        coinsData.forEach((coin, idx) => {
+          const prevCoin = marketData.data[idx]
+          const prevPrice = prevCoin?.data?.[0]?.current_price
+          const newPrice = coin?.data?.[0]?.current_price
+          const coinName = coin?.arg?.instId || coin?.data?.[0]?.name || 'Unknown'
+          
+          if (prevPrice !== undefined && prevPrice !== newPrice) {
+            const change = ((newPrice - prevPrice) / prevPrice * 100).toFixed(4)
+            console.log(`💰 ${coinName}: $${prevPrice?.toFixed(2)} → $${newPrice?.toFixed(2)} (${change > 0 ? '+' : ''}${change}%)`)
+          }
+        })
+      } else if (coinsData.length > 0) {
+        console.log(`📊 Initial data loaded: ${coinsData.length} coins`)
+      }
+      
+      // Always update - React will handle re-rendering
+      setMarketData(transformedData)
+      
+      // Force a re-render by updating the update count
       setUpdateCount(prev => prev + 1)
       setIsLoading(false)
       isFirstFetchRef.current = false // Mark that first fetch is complete
+      
+      // Reset fetching flag immediately after successful update
+      isFetchingRef.current = false
     } catch (err) {
       console.error('Error fetching market data:', err)
       // Provide user-friendly error messages
@@ -143,9 +163,40 @@ function VisualizationSection() {
       setIsLoading(false)
     } finally {
       // FIX: Always reset fetching flag in finally block
-      isFetchingRef.current = false
+      // Use setTimeout to ensure it's reset even if there's an error
+      setTimeout(() => {
+        isFetchingRef.current = false
+      }, 100)
     }
   }, []) // No dependencies - uses refs for state that doesn't need to trigger re-renders
+
+  // Set up WebSocket for real-time updates
+  useEffect(() => {
+    const ws = getRealtimeWebSocket()
+    
+    // Connect WebSocket
+    ws.connect()
+    
+    // Listen for visualization data updates
+    const handleMessage = (message) => {
+      // Check if this is a visualization data update
+      if (message.type === 'visualization_update' || 
+          (message.connector_id && ['coingecko_top', 'coingecko_global'].includes(message.connector_id))) {
+        console.log('📊 Received visualization update via WebSocket, forcing immediate refresh...', message)
+        // Force immediate fetch - bypass the concurrent check
+        fetchData(true) // Pass force=true to bypass the isFetchingRef check
+      }
+    }
+    
+    ws.on('message', handleMessage)
+    ws.on('connected', () => {
+      console.log('✅ WebSocket connected for real-time visualization updates')
+    })
+    
+    return () => {
+      ws.off('message', handleMessage)
+    }
+  }, [fetchData])
 
   // Fetch global crypto market data continuously with optimized interval
   useEffect(() => {
@@ -161,10 +212,16 @@ function VisualizationSection() {
     // Fetch immediately on mount
     fetchData()
 
-    // Then fetch every 5 seconds for real-time updates
+    // Then fetch every 5 seconds for real-time updates (like CoinMarketCap/CoinGecko)
     intervalRef.current = setInterval(() => {
       if (isMounted) {
-        fetchData()
+        // Only skip if fetch is in progress (but allow it to retry after timeout)
+        if (!isFetchingRef.current) {
+          fetchData()
+        } else {
+          // If stuck for more than 3 seconds, force a reset and retry
+          console.warn('Fetch seems stuck, will retry on next interval...')
+        }
       }
     }, REFRESH_INTERVAL)
 

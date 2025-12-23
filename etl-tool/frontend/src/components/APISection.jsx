@@ -899,42 +899,15 @@ function APISection({ data, setData }) {
         
         ws.connect()
       } else {
-        // For one-time fetch, do a single request
-        const finalUrl = buildUrlWithParams(apiUrl, queryParamsObj)
-        const response = await fetch(finalUrl, {
-          method: httpMethod,
-          headers: requestHeaders
-        })
-
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`)
-        }
-
-        const contentType = response.headers.get('content-type') || ''
-        let extractedData = []
-        
-        if (contentType.includes('application/json')) {
-          const jsonData = await response.json()
-          if (Array.isArray(jsonData)) {
-            extractedData = jsonData
-          } else if (jsonData.data && Array.isArray(jsonData.data)) {
-            extractedData = jsonData.data
-          } else {
-            extractedData = [jsonData]
-          }
-        } else {
-          extractedData = [{ raw: await response.text() }]
-        }
-
-        const { uniqueData } = removeDuplicates(extractedData)
-        
-        setData({
-          source: 'API Link',
-          url: finalUrl,
-          data: uniqueData,
-          totalRows: uniqueData.length,
-          timestamp: new Date().toISOString()
-        })
+        // One-time fetch mode removed to enforce architecture:
+        // API → Database → Pipeline → Backend → Frontend
+        // All API calls must go through backend connectors that persist to database first.
+        // Use Streaming mode to fetch data through backend connector.
+        throw new Error(
+          'One-time fetch mode is no longer supported. ' +
+          'Please use Streaming mode to fetch data through the backend connector. ' +
+          'This enforces the architecture: API → Database → Backend → Frontend.'
+        )
       }
     } catch (err) {
       setError(`Error: ${err.message}`)

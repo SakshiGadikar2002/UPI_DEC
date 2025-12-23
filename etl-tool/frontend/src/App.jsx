@@ -3,6 +3,7 @@ import Header from './components/Header'
 import Sidebar from './components/Sidebar'
 import FileUploadSection from './components/FileUploadSection'
 import APISection from './components/APISection'
+import APIGatewaySection from './components/APIGatewaySection'
 import WebSocketSection from './components/WebSocketSection'
 import VisualizationSection from './components/VisualizationSection'
 import DataDisplay from './components/DataDisplay'
@@ -16,7 +17,7 @@ function App() {
   const [activeSection, setActiveSection] = useState(() => {
     try {
       const saved = localStorage.getItem('etl-active-section')
-      const allowed = ['api', 'websocket', 'visualization', 'files']
+      const allowed = ['api', 'gateway', 'websocket', 'visualization', 'files']
       if (saved && allowed.includes(saved)) {
         return saved === 'files' ? 'api' : saved
       }
@@ -317,6 +318,10 @@ function App() {
             data={sectionData.api}
             setData={(data) => updateSectionData('api', data)}
           />
+        )
+      case 'gateway':
+        return (
+          <APIGatewaySection />
         )
       case 'websocket':
         return (
