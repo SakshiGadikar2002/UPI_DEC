@@ -10,6 +10,7 @@ import DataDisplay from './components/DataDisplay'
 import ErrorBoundary from './components/ErrorBoundary'
 import AuthForm from './components/AuthForm'
 import PipelineViewer from './components/PipelineViewer'
+import { saveCredentials, clearCredentials, getSavedCredentials, isRememberMeEnabled, saveEmail } from './utils/credentialStorage'
 import './App.css'
 
 function App() {
@@ -94,6 +95,8 @@ function App() {
     if (token) {
       loadProfile(token)
     }
+    // Note: We do NOT auto-login with saved credentials here
+    // Remember Me should only pre-fill the login form, not auto-login
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -210,7 +213,7 @@ function App() {
   }
 
   // Auth: login flow
-  const handleLogin = async ({ email, password }) => {
+  const handleLogin = async ({ email, password, rememberMe }) => {
     setAuthLoading(true)
     setAuthError('')
     try {
@@ -229,6 +232,19 @@ function App() {
       const data = await resp.json()
       const accessToken = data.access_token
       if (!accessToken) throw new Error('Token missing in response')
+      
+      // Always save email for persistence (user preference)
+      saveEmail(email)
+      
+      // Save credentials if Remember Me is checked
+      if (rememberMe) {
+        saveCredentials(email, password)
+        console.log('✅ Credentials saved for Remember Me')
+      } else {
+        clearCredentials()
+        console.log('✅ Remember Me disabled, credentials cleared')
+      }
+      
       setToken(accessToken)
       await loadProfile(accessToken)
     } catch (err) {
@@ -240,7 +256,7 @@ function App() {
   }
 
   // Auth: registration flow
-  const handleRegister = async ({ email, password, fullName }) => {
+  const handleRegister = async ({ email, password, fullName, rememberMe }) => {
     setAuthLoading(true)
     setAuthError('')
     try {
@@ -254,7 +270,7 @@ function App() {
         throw new Error(text || 'Registration failed')
       }
       // Auto-login after successful registration
-      await handleLogin({ email, password })
+      await handleLogin({ email, password, rememberMe })
     } catch (err) {
       console.error(err)
       setAuthError(err.message || 'Registration failed')
@@ -270,6 +286,16 @@ function App() {
     } catch (err) {
       console.warn('Logout error (ignored):', err)
     }
+    
+    // Only clear credentials if Remember Me is not enabled
+    // This preserves email/password for the next login
+    if (!isRememberMeEnabled()) {
+      clearCredentials()
+      console.log('✅ Credentials cleared on logout (Remember Me was off)')
+    } else {
+      console.log('✅ Credentials preserved on logout (Remember Me is on)')
+    }
+    
     setUser(null)
     setToken('')
     localStorage.removeItem('etl-auth-token')

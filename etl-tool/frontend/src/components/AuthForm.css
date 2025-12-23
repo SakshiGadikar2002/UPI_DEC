@@ -67,6 +67,30 @@
   color: #9ca3af;
 }
 
+/* Remember Me checkbox styling */
+.remember-me-label {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 10px !important;
+  margin: -8px 0;
+  cursor: pointer;
+}
+
+.remember-me-label input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  margin: 0;
+  accent-color: #78176b;
+}
+
+.remember-me-label span {
+  font-size: 14px;
+  font-weight: 500;
+  color: #4b5563;
+  user-select: none;
+}
+
 .auth-submit {
   margin-top: 4px;
   padding: 14px;

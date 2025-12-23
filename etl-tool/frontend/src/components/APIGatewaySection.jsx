@@ -92,6 +92,7 @@ function APIGatewaySection() {
   }
 
   const getErrorRateColor = (rate) => {
+    if (rate === null || rate === undefined || rate === 0) return '#22c55e'
     if (rate < 1) return '#22c55e'
     if (rate < 5) return '#f59e0b'
     return '#ef4444'
@@ -211,7 +212,7 @@ function APIGatewaySection() {
 
       {telemetry && (
         <div className="gateway-dashboard">
-          {/* Overall Metrics Cards */}
+          {/* Overall Metrics - Clean inline display */}
           <div className="metrics-grid">
             <div className="metric-card">
               <div className="metric-label">Total Requests</div>
@@ -224,10 +225,12 @@ function APIGatewaySection() {
                 className="metric-value" 
                 style={{ color: getErrorRateColor(telemetry.overall.error_rate) }}
               >
-                {formatNumber(telemetry.overall.error_rate)}%
+                {telemetry.overall.error_rate !== null && telemetry.overall.error_rate !== undefined 
+                  ? `${formatNumber(telemetry.overall.error_rate)}%` 
+                  : '0%'}
               </div>
               <div className="metric-subtitle">
-                4xx: {telemetry.overall.error_4xx} | 5xx: {telemetry.overall.error_5xx}
+                4xx: {telemetry.overall.error_4xx || 0} | 5xx: {telemetry.overall.error_5xx || 0}
               </div>
             </div>
             <div className="metric-card">
@@ -238,7 +241,7 @@ function APIGatewaySection() {
               </div>
             </div>
             <div className="metric-card">
-              <div className="metric-label">Pipeline Success Rate</div>
+              <div className="metric-label">Pipeline Success</div>
               <div 
                 className="metric-value"
                 style={{ color: telemetry.pipeline_stats.success_rate >= 95 ? '#22c55e' : '#f59e0b' }}
@@ -275,11 +278,13 @@ function APIGatewaySection() {
                       <td>{formatNumber(conn.request_count)}</td>
                       <td>
                         <span style={{ color: getErrorRateColor(conn.error_rate) }}>
-                          {formatNumber(conn.error_rate)}%
+                          {conn.error_rate !== null && conn.error_rate !== undefined 
+                            ? `${formatNumber(conn.error_rate)}%` 
+                            : '0%'}
                         </span>
                       </td>
-                      <td>{conn.error_4xx}</td>
-                      <td>{conn.error_5xx}</td>
+                      <td>{conn.error_4xx || 0}</td>
+                      <td>{conn.error_5xx || 0}</td>
                       <td>{formatLatency(conn.avg_latency_ms)}</td>
                       <td>{formatLatency(conn.p95_latency_ms)}</td>
                       <td>
