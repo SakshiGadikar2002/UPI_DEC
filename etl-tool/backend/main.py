@@ -52,6 +52,7 @@ from services.message_processor import MessageProcessor
 from services.websocket_stream_manager import WebSocketStreamManager
 
 from job_scheduler import start_job_scheduler, stop_job_scheduler
+from job_scheduler.pipeline_tracker import start_pipeline_tracker
 
 # --- Auto-insert scheduled API connectors if missing ---
 import asyncio as _asyncio
@@ -267,6 +268,14 @@ async def lifespan(app: FastAPI):
     # Run scheduler starts in the event loop after a brief delay to ensure app is ready
     asyncio.get_event_loop().call_soon(start_scheduler_later)
     
+    # Start pipeline tracker
+    try:
+        loop = asyncio.get_event_loop()
+        await start_pipeline_tracker(loop)
+        logger.info("[STARTUP] ✅ Pipeline tracker initialized")
+    except Exception as e:
+        logger.error(f"[STARTUP] ❌ Failed to start pipeline tracker: {e}")
+
     yield
     
     # Shutdown: Stop schedulers and close PostgreSQL connection
@@ -3377,13 +3386,23 @@ async def get_pipeline_view(api_id: str):
 @app.get("/api/etl/active")
 async def list_active_etl_apis(lookback_minutes: int = 90):
     """
-    List active scheduled APIs with their latest activity derived from existing data tables.
-    Uses api_connectors + api_connector_data/api_connector_items only (no new tables).
+    List active scheduled APIs with their latest activity.
+    Uses pipeline_steps table as the primary source of truth for counts.
+    Falls back to calculating from tables if pipeline_steps record is missing.
     """
     try:
         pool = get_pool()
         cutoff = datetime.utcnow() - timedelta(minutes=lookback_minutes)
         async with pool.acquire() as conn:
+            # Fetch pipeline steps for fast lookup
+            pipeline_steps_map = {}
+            try:
+                steps = await conn.fetch("SELECT * FROM pipeline_steps")
+                for step in steps:
+                    pipeline_steps_map[step['pipeline_name']] = dict(step)
+            except Exception as e:
+                logger.warning(f"Could not fetch pipeline_steps: {e}")
+
             connectors = await conn.fetch(
                 """
                 SELECT connector_id, name, api_url, polling_interval, status, exchange_name
@@ -3397,6 +3416,8 @@ async def list_active_etl_apis(lookback_minutes: int = 90):
             for row in connectors:
                 row_dict = dict(row)
                 connector_id = row_dict["connector_id"]
+                
+                # Get latest activity timestamps (still useful for liveness check)
                 last_data = await conn.fetchrow(
                     """
                     SELECT timestamp, status_code, response_time_ms
@@ -3417,14 +3438,29 @@ async def list_active_etl_apis(lookback_minutes: int = 90):
                     """,
                     connector_id,
                 )
-                totals = await conn.fetchrow(
-                    """
-                    SELECT 
-                        (SELECT COUNT(*) FROM api_connector_data WHERE connector_id = $1) AS total_data,
-                        (SELECT COUNT(*) FROM api_connector_items WHERE connector_id = $1) AS total_items
-                    """,
-                    connector_id,
-                )
+                
+                # Get counts - prefer pipeline_steps, fallback to slow COUNT(*)
+                if connector_id in pipeline_steps_map:
+                    step_info = pipeline_steps_map[connector_id]
+                    total_data = step_info.get('extract_count', 0)
+                    total_items = step_info.get('transform_count', 0)
+                    # Use status from pipeline_steps if available? 
+                    # User said "Status should change automatically: PENDING -> RUNNING -> COMPLETED"
+                    # But the connector status in api_connectors is 'active'. 
+                    # We might want to show the pipeline status too, but this endpoint returns connector status.
+                    # We'll stick to counts for now to avoid breaking frontend.
+                else:
+                    totals = await conn.fetchrow(
+                        """
+                        SELECT 
+                            (SELECT COUNT(*) FROM api_connector_data WHERE connector_id = $1) AS total_data,
+                            (SELECT COUNT(*) FROM api_connector_items WHERE connector_id = $1) AS total_items
+                        """,
+                        connector_id,
+                    )
+                    totals_dict = dict(totals) if totals else {}
+                    total_data = totals_dict.get("total_data", 0)
+                    total_items = totals_dict.get("total_items", 0)
 
                 last_ts_candidates = []
                 if last_data and dict(last_data).get("timestamp"):
@@ -3436,7 +3472,6 @@ async def list_active_etl_apis(lookback_minutes: int = 90):
                 # Treat scheduler-managed APIs as ACTIVE as long as connector exists
                 status_label = "ACTIVE"
 
-                totals_dict = dict(totals) if totals else {}
                 last_data_dict = dict(last_data) if last_data else {}
 
                 results.append(
@@ -3452,14 +3487,48 @@ async def list_active_etl_apis(lookback_minutes: int = 90):
                         "last_response_time_ms": float(last_data_dict.get("response_time_ms"))
                         if last_data_dict and last_data_dict.get("response_time_ms") is not None
                         else None,
-                        "total_records": totals_dict.get("total_data", 0),
-                        "total_items": totals_dict.get("total_items", 0),
+                        "total_records": total_data,
+                        "total_items": total_items,
                     }
                 )
 
         return results
     except Exception as e:
         logger.error(f"[PIPELINE] Failed to list active ETL APIs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/pipeline/steps")
+async def get_pipeline_steps():
+    """
+    Get current state of all ETL pipelines from the single source of truth table.
+    This endpoint reads ONLY from the database (pipeline_steps table).
+    """
+    try:
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            # Check if table exists first to avoid 500 error during migration
+            table_exists = await conn.fetchval(
+                "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'pipeline_steps')"
+            )
+            if not table_exists:
+                return []
+                
+            steps = await conn.fetch("SELECT * FROM pipeline_steps ORDER BY pipeline_name")
+            
+            # Convert to list of dicts and handle datetime serialization
+            results = []
+            for step in steps:
+                step_dict = dict(step)
+                if step_dict.get('last_run_at'):
+                    step_dict['last_run_at'] = step_dict['last_run_at'].isoformat()
+                if step_dict.get('created_at'):
+                    step_dict['created_at'] = step_dict['created_at'].isoformat()
+                results.append(step_dict)
+                
+            return results
+    except Exception as e:
+        logger.error(f"Failed to fetch pipeline steps: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
