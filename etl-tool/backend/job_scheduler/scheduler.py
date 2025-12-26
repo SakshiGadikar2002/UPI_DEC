@@ -16,6 +16,7 @@ from database import (
     log_pipeline_step,
     start_pipeline_run,
     get_pool,
+    log_failed_api_call,
 )
 
 logger = logging.getLogger(__name__)
@@ -182,7 +183,48 @@ class JobScheduler:
 
             if response.status_code >= 400:
                 run_status = "failure"
-                run_error = f"HTTP {response.status_code}"
+                # Extract main error reason from response
+                error_reason = f"HTTP {response.status_code}"
+                try:
+                    # Try to parse error message from JSON response
+                    if response.headers.get("content-type", "").startswith("application/json"):
+                        error_data = response.json()
+                        if isinstance(error_data, dict):
+                            error_msg = error_data.get("message") or error_data.get("error") or error_data.get("msg") or error_data.get("description")
+                            if error_msg:
+                                error_reason = f"HTTP {response.status_code}: {error_msg}"
+                            else:
+                                error_reason = f"HTTP {response.status_code}: {str(error_data)[:200]}"
+                        else:
+                            error_reason = f"HTTP {response.status_code}: {str(error_data)[:200]}"
+                    else:
+                        # For non-JSON responses, get first 200 chars
+                        error_text = response.text[:200].strip()
+                        if error_text:
+                            error_reason = f"HTTP {response.status_code}: {error_text}"
+                except Exception:
+                    # Fallback to status code only
+                    error_reason = f"HTTP {response.status_code}: Server returned error response"
+                
+                run_error = error_reason
+                # Log failed API call for observability
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        log_failed_api_call(
+                            api_id=api_id,
+                            api_name=api_name,
+                            url=url,
+                            method=method,
+                            error_message=error_reason,
+                            status_code=response.status_code,
+                            response_time_ms=response_time_ms,
+                            pipeline_run_id=pipeline_run_id,
+                            step_name="extract",
+                        ),
+                        self.event_loop,
+                    ).result(timeout=3)
+                except Exception as log_err:
+                    logger.debug(f"[FAILED_API] Failed to log failed API call: {log_err}")
             
             # ETL: Clean (lightweight placeholder)
             _log_step("clean", "running")
@@ -198,7 +240,26 @@ class JobScheduler:
                     data = response.json()
                 except Exception as parse_err:
                     data = {"raw": raw_response}
-                    _log_step("transform", "failure", error_message=str(parse_err))
+                    error_reason = f"JSON parse error: {str(parse_err)[:200]}"
+                    _log_step("transform", "failure", error_message=error_reason)
+                    # Log failed API call for transform error
+                    try:
+                        asyncio.run_coroutine_threadsafe(
+                            log_failed_api_call(
+                                api_id=api_id,
+                                api_name=api_name,
+                                url=url,
+                                method=method,
+                                error_message=error_reason,
+                                status_code=response.status_code if response else None,
+                                response_time_ms=response_time_ms if 'response_time_ms' in locals() else None,
+                                pipeline_run_id=pipeline_run_id,
+                                step_name="transform",
+                            ),
+                            self.event_loop,
+                        ).result(timeout=3)
+                    except Exception as log_err:
+                        logger.debug(f"[FAILED_API] Failed to log failed API call: {log_err}")
                     raise
             else:
                 data = {"raw": raw_response}
@@ -237,6 +298,32 @@ class JobScheduler:
                     self.event_loop,
                 )
                 save_result = save_future.result(timeout=20)
+                
+                # Check if save_result indicates an error
+                if save_result and isinstance(save_result, dict) and save_result.get("error"):
+                    # Database save failed - extract detailed error
+                    error_type = save_result.get("error_type", "UnknownError")
+                    error_message = save_result.get("error_message", "Unknown error")
+                    error_details = save_result.get("error_details", error_message)
+                    
+                    # Create specific error reason based on error type and message
+                    if "timeout" in error_message.lower() or "timed out" in error_message.lower():
+                        error_reason = f"Database operation timeout: {error_details[:200]}"
+                    elif "connection" in error_message.lower() or "connect" in error_message.lower():
+                        error_reason = f"Database connection failed: {error_details[:200]}"
+                    elif "constraint" in error_message.lower() or "violates" in error_message.lower():
+                        error_reason = f"Database constraint violation: {error_details[:200]}"
+                    elif "duplicate" in error_message.lower() or "unique" in error_message.lower():
+                        error_reason = f"Duplicate entry error: {error_details[:200]}"
+                    elif "permission" in error_message.lower() or "access" in error_message.lower():
+                        error_reason = f"Database permission denied: {error_details[:200]}"
+                    elif "syntax" in error_message.lower() or "invalid" in error_message.lower():
+                        error_reason = f"Database query error: {error_details[:200]}"
+                    else:
+                        error_reason = f"Database error ({error_type}): {error_details[:200]}"
+                    
+                    raise Exception(error_reason)
+                
                 records_saved = (
                     save_result.get("records_saved", 0) if isinstance(save_result, dict) else 0
                 )
@@ -269,28 +356,171 @@ class JobScheduler:
                 )
                 logger.info(f"[JOB] ✅ {api_name}: Saved to DB (status={response.status_code}, time={response_time_ms}ms)")
                 print(f"[JOB] ✅ {api_name}: Saved to DB (status={response.status_code}, time={response_time_ms}ms)")
+            except asyncio.TimeoutError:
+                error_reason = "Database save timeout - operation exceeded 20 seconds"
+                logger.error(f"[JOB] ❌ Database save timeout for {api_name}")
+                _log_step("load", "failure", error_message=error_reason)
+                run_status = "failure"
+                run_error = error_reason
+                # Log failed API call for observability
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        log_failed_api_call(
+                            api_id=api_id,
+                            api_name=api_name,
+                            url=url,
+                            method=method,
+                            error_message=error_reason,
+                            status_code=response.status_code if response else None,
+                            response_time_ms=response_time_ms,
+                            pipeline_run_id=pipeline_run_id,
+                            step_name="load",
+                        ),
+                        self.event_loop,
+                    ).result(timeout=3)
+                except Exception as log_err:
+                    logger.debug(f"[FAILED_API] Failed to log failed API call: {log_err}")
             except Exception as e:
-                logger.error(f"[JOB] ❌ Failed to schedule save callback: {e}")
-                print(f"[JOB] ❌ Failed to schedule save callback: {e}")
+                logger.error(f"[JOB] ❌ Failed to save to database: {e}")
+                print(f"[JOB] ❌ Failed to save to database: {e}")
                 _log_step("load", "failure", error_message=str(e))
                 run_status = "failure"
-                run_error = str(e)
+                
+                # Extract main error reason from exception
+                error_str = str(e)
+                error_type = type(e).__name__
+                
+                # The error_reason is already set in the exception if it came from database error handling
+                # Otherwise, extract it from the exception message
+                if error_str and not error_str.startswith("Database"):
+                    if "timeout" in error_str.lower() or "timed out" in error_str.lower():
+                        error_reason = f"Database save timeout: {error_str[:200]}"
+                    elif "connection" in error_str.lower() or "connect" in error_str.lower():
+                        error_reason = f"Database connection error: {error_str[:200]}"
+                    elif "constraint" in error_str.lower() or "violates" in error_str.lower():
+                        error_reason = f"Database constraint violation: {error_str[:200]}"
+                    elif "duplicate" in error_str.lower() or "unique" in error_str.lower():
+                        error_reason = f"Duplicate key error: {error_str[:200]}"
+                    elif "permission" in error_str.lower() or "access" in error_str.lower():
+                        error_reason = f"Database permission denied: {error_str[:200]}"
+                    elif "syntax" in error_str.lower() or "invalid" in error_str.lower():
+                        error_reason = f"Database query error: {error_str[:200]}"
+                    else:
+                        error_reason = f"Database error ({error_type}): {error_str[:200]}"
+                else:
+                    # Error reason already formatted
+                    error_reason = error_str[:300] if error_str else f"Database save failed: {error_type}"
+                
+                run_error = error_reason
+                # Log failed API call for observability
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        log_failed_api_call(
+                            api_id=api_id,
+                            api_name=api_name,
+                            url=url,
+                            method=method,
+                            error_message=error_reason,
+                            status_code=response.status_code if response else None,
+                            response_time_ms=response_time_ms,
+                            pipeline_run_id=pipeline_run_id,
+                            step_name="load",
+                        ),
+                        self.event_loop,
+                    ).result(timeout=3)
+                except Exception as log_err:
+                    logger.debug(f"[FAILED_API] Failed to log failed API call: {log_err}")
         
         except requests.exceptions.Timeout:
             logger.error(f"[JOB] TIMEOUT: {api_name} (exceeded 15s)")
             _log_step("extract", "failure", error_message="timeout after 15s")
             run_status = "failure"
             run_error = "timeout"
+            # Log failed API call for observability
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    log_failed_api_call(
+                        api_id=api_id,
+                        api_name=api_name,
+                        url=url,
+                        method=method,
+                        error_message="Request timeout after 15 seconds",
+                        status_code=None,
+                        response_time_ms=None,
+                        pipeline_run_id=pipeline_run_id,
+                        step_name="extract",
+                    ),
+                    self.event_loop,
+                ).result(timeout=3)
+            except Exception as log_err:
+                logger.debug(f"[FAILED_API] Failed to log failed API call: {log_err}")
         except requests.exceptions.RequestException as e:
             logger.error(f"[JOB] REQUEST ERROR: {api_name}: {e}")
             _log_step("extract", "failure", error_message=str(e))
             run_status = "failure"
-            run_error = str(e)
+            
+            # Extract main error reason
+            error_type = type(e).__name__
+            error_str = str(e)
+            if isinstance(e, requests.exceptions.ConnectionError):
+                error_reason = f"Connection error: Unable to connect to {url.split('/')[2] if '/' in url else 'server'}"
+            elif isinstance(e, requests.exceptions.SSLError):
+                error_reason = "SSL/TLS error: Certificate verification failed"
+            elif isinstance(e, requests.exceptions.InvalidURL):
+                error_reason = f"Invalid URL: {error_str[:150]}"
+            elif isinstance(e, requests.exceptions.TooManyRedirects):
+                error_reason = "Too many redirects: Request exceeded maximum redirect limit"
+            else:
+                error_reason = f"Request failed ({error_type}): {error_str[:200]}"
+            
+            run_error = error_reason
+            # Log failed API call for observability
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    log_failed_api_call(
+                        api_id=api_id,
+                        api_name=api_name,
+                        url=url,
+                        method=method,
+                        error_message=error_reason,
+                        status_code=None,
+                        response_time_ms=None,
+                        pipeline_run_id=pipeline_run_id,
+                        step_name="extract",
+                    ),
+                    self.event_loop,
+                ).result(timeout=3)
+            except Exception as log_err:
+                logger.debug(f"[FAILED_API] Failed to log failed API call: {log_err}")
         except Exception as e:
             logger.error(f"[JOB] UNEXPECTED ERROR: {api_name}: {e}")
             _log_step("transform", "failure", error_message=str(e))
             run_status = "failure"
-            run_error = str(e)
+            
+            # Extract main error reason
+            error_type = type(e).__name__
+            error_str = str(e)
+            error_reason = f"Unexpected error ({error_type}): {error_str[:200]}"
+            
+            run_error = error_reason
+            # Log failed API call for observability
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    log_failed_api_call(
+                        api_id=api_id,
+                        api_name=api_name,
+                        url=url,
+                        method=method,
+                        error_message=error_reason,
+                        status_code=response.status_code if response else None,
+                        response_time_ms=response_time_ms if 'response_time_ms' in locals() else None,
+                        pipeline_run_id=pipeline_run_id,
+                        step_name="transform",
+                    ),
+                    self.event_loop,
+                ).result(timeout=3)
+            except Exception as log_err:
+                logger.debug(f"[FAILED_API] Failed to log failed API call: {log_err}")
         finally:
             if pipeline_run_id:
                 try:

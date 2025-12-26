@@ -4,8 +4,9 @@ import { checkBackendHealth } from '../utils/backendCheck'
 import { removeDuplicates } from '../utils/duplicateRemover'
 import { getRealtimeWebSocket } from '../utils/realtimeWebSocket'
 import PipelineViewer from './PipelineViewer'
+import FailedApiCallsViewer from './FailedApiCallsViewer'
 
-function APISection({ data, setData }) {
+function APISection({ data, setData, onViewPipeline = null }) {
   const apiBase = import.meta.env.VITE_API_BASE || ''
   // Start with an empty URL; user or Quick Connect will provide it.
   // This avoids hardcoding any specific provider (like Binance) in the UI state.
@@ -40,7 +41,7 @@ function APISection({ data, setData }) {
   const [activeError, setActiveError] = useState('')
   const [selectedActiveApi, setSelectedActiveApi] = useState(null)
   const [showPipelineView, setShowPipelineView] = useState(false)
-  const [pipelineViewExpanded, setPipelineViewExpanded] = useState(false)
+  const [showFailedApisView, setShowFailedApisView] = useState(false)
   const [formExpanded, setFormExpanded] = useState(false)
   const [scheduledApisExpanded, setScheduledApisExpanded] = useState(false)
   const wsRef = useRef(null)
@@ -1011,6 +1012,14 @@ function APISection({ data, setData }) {
               >
                 {activeLoading ? 'Refreshing...' : 'Refresh'}
               </button>
+              <button
+                className="extract-button-small failed-apis-header-button"
+                onClick={() => {
+                  setShowFailedApisView(true)
+                }}
+              >
+                View Failed APIs
+              </button>
               <button 
                 className="collapse-toggle"
                 onClick={() => setScheduledApisExpanded(!scheduledApisExpanded)}
@@ -1048,16 +1057,21 @@ function APISection({ data, setData }) {
                         <p className="pipeline-card-url">{api.api_url}</p>
                       </div>
                     </div>
-                    <button
-                      className="pipeline-view-button"
-                      onClick={() => {
-                        setSelectedActiveApi(api.connector_id)
-                        setShowPipelineView(true)
-                        setPipelineViewExpanded(true)
-                      }}
-                    >
-                      View Pipeline →
-                    </button>
+                    <div className="pipeline-card-actions">
+                      <button
+                        className="pipeline-view-button"
+                        onClick={() => {
+                          if (onViewPipeline) {
+                            onViewPipeline(api.connector_id)
+                          } else {
+                            setSelectedActiveApi(api.connector_id)
+                            setShowPipelineView(true)
+                          }
+                        }}
+                      >
+                        View Pipeline →
+                      </button>
+                    </div>
                   </div>
                   <div className="pipeline-card-stats">
                     <div className="pipeline-stat-item">
@@ -1087,31 +1101,45 @@ function APISection({ data, setData }) {
           )}
         </div>
 
-        {showPipelineView && selectedActiveApi && (
-          <div className="collapsible-section">
-            <div className="collapsible-header" onClick={() => setPipelineViewExpanded(!pipelineViewExpanded)}>
-              <h3>View Pipeline</h3>
-              <button 
-                className="collapse-toggle"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setPipelineViewExpanded(!pipelineViewExpanded)
-                }}
-                aria-label={pipelineViewExpanded ? 'Collapse Pipeline View' : 'Expand Pipeline View'}
-              >
-                <span className={`collapse-icon ${pipelineViewExpanded ? 'expanded' : ''}`}>▼</span>
-              </button>
-            </div>
-            {pipelineViewExpanded && (
-              <div className="collapsible-content">
-                <div className="active-pipeline-wrapper">
-                  <PipelineViewer visible apiId={selectedActiveApi} onClose={() => {
-                    setShowPipelineView(false)
-                    setPipelineViewExpanded(false)
-                  }} />
-                </div>
+        {/* Pipeline Viewer Modal Popup (fallback if onViewPipeline not provided) */}
+        {showPipelineView && selectedActiveApi && !onViewPipeline && (
+          <div className="pipeline-viewer-modal-overlay" onClick={() => setShowPipelineView(false)}>
+            <div className="pipeline-viewer-modal-content" onClick={(e) => e.stopPropagation()}>
+              <div className="pipeline-viewer-modal-header">
+                <h3>Pipeline View - {selectedActiveApi}</h3>
+                <button 
+                  className="pipeline-viewer-modal-close"
+                  onClick={() => setShowPipelineView(false)}
+                  aria-label="Close"
+                >
+                  ×
+                </button>
               </div>
-            )}
+              <div className="pipeline-viewer-modal-body">
+                <PipelineViewer visible apiId={selectedActiveApi} onClose={() => setShowPipelineView(false)} />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Failed APIs Modal Popup */}
+        {showFailedApisView && (
+          <div className="failed-apis-modal-overlay" onClick={() => setShowFailedApisView(false)}>
+            <div className="failed-apis-modal-content" onClick={(e) => e.stopPropagation()}>
+              <div className="failed-apis-modal-header">
+                <h3>Failed API Calls (All APIs)</h3>
+                <button 
+                  className="failed-apis-modal-close"
+                  onClick={() => setShowFailedApisView(false)}
+                  aria-label="Close"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="failed-apis-modal-body">
+                <FailedApiCallsViewer apiId={null} onClose={() => setShowFailedApisView(false)} />
+              </div>
+            </div>
           </div>
         )}
 

@@ -52,7 +52,6 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
   const [options, setOptions] = useState([])
   const [showFitViewModal, setShowFitViewModal] = useState(false)
   const [isTriggering, setIsTriggering] = useState(false)
-
   // When apiId is provided (from running connector), use it directly - no dropdown needed
   useEffect(() => {
     if (apiId) {
@@ -279,7 +278,17 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
       }
       
       if (mode === 'full') {
-        setPipelineData(data)
+        // Use functional update to prevent unnecessary re-renders and flickering
+        setPipelineData(prevData => {
+          // Only update if data actually changed to prevent flickering
+          if (prevData && JSON.stringify(prevData.current_run?.run_id) === JSON.stringify(data.current_run?.run_id) && 
+              JSON.stringify(prevData.data_stats) === JSON.stringify(data.data_stats) &&
+              JSON.stringify(prevData.current_run?.status) === JSON.stringify(data.current_run?.status)) {
+            // Data hasn't changed significantly, return previous to prevent flicker
+            return prevData
+          }
+          return data
+        })
         const counts = extractCounts(data)
         console.log('[PipelineViewer] Full mode - extracted counts:', counts)
         
@@ -287,6 +296,11 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
         setRecordTargets(prevTargets => {
           // Merge with previous to preserve any ongoing animations
           const merged = { ...prevTargets, ...counts }
+          // Only update if counts actually changed
+          const hasChanges = Object.keys(counts).some(key => counts[key] !== prevTargets[key])
+          if (!hasChanges && Object.keys(prevTargets).length > 0) {
+            return prevTargets // Return previous to prevent unnecessary re-render
+          }
           console.log('[PipelineViewer] Full mode - setting record targets:', merged)
           return merged
         })
@@ -416,9 +430,10 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
         console.error(`[PipelineViewer] Error fetching counts at tick ${tick}:`, err)
       })
       
-      // Fetch full data every 2 seconds (every 4 ticks at 500ms interval) to get complete state
+      // Fetch full data every 3 seconds (every 6 ticks at 500ms interval) to get complete state
       // This includes step statuses, run status, and all metadata
-      if (tick % 4 === 0) {
+      // Reduced frequency to prevent flickering
+      if (tick % 6 === 0) {
         fetchPipeline(selectedApi, { silent: true, mode: 'full' })
       }
     }, 500) // Poll every 500ms for real-time synchronization with backend
@@ -1060,36 +1075,68 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
               <div className="sidebar-title">Run history</div>
               <div className="history-list scrollable-history">
                 {pipelineData?.history?.length === 0 && <div className="history-empty">No history yet</div>}
-                {pipelineData?.history?.slice(0, 3).map((run) => (
-                  <div key={run.run_id} className="history-item">
-                    <div className="history-row">
-                      <span className={`status-pill status-${run.status}`}>{run.status}</span>
-                      <span className="history-time">
-                        {run.started_at ? new Date(run.started_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : '-'}
-                      </span>
+                {pipelineData?.history?.slice(0, 3).map((run) => {
+                  let timestamp = '-'
+                  if (run.started_at) {
+                    try {
+                      const date = new Date(run.started_at)
+                      if (!isNaN(date.getTime())) {
+                        timestamp = date.toLocaleTimeString('en-US', { 
+                          hour: '2-digit', 
+                          minute: '2-digit', 
+                          second: '2-digit', 
+                          hour12: false 
+                        })
+                      }
+                    } catch (e) {
+                      console.warn('Invalid date format:', run.started_at)
+                    }
+                  }
+                  return (
+                    <div key={run.run_id} className="history-item">
+                      <div className="history-row">
+                        <span className={`status-pill status-${run.status}`}>{run.status}</span>
+                        <span className="history-time">{timestamp}</span>
+                      </div>
+                      <div className="history-hint">
+                        {run.duration_seconds ? `${run.duration_seconds.toFixed(1)}s` : 'in progress'}
+                        {run.error_message ? ` • ${run.error_message}` : ''}
+                      </div>
                     </div>
-                    <div className="history-hint">
-                      {run.duration_seconds ? `${run.duration_seconds.toFixed(1)}s` : 'in progress'}
-                      {run.error_message ? ` • ${run.error_message}` : ''}
-                    </div>
-                  </div>
-                ))}
+                  )
+                })}
                 {pipelineData?.history?.length > 3 && (
                   <div className="history-scrollable">
-                    {pipelineData.history.slice(3).map((run) => (
-                      <div key={run.run_id} className="history-item">
-                        <div className="history-row">
-                          <span className={`status-pill status-${run.status}`}>{run.status}</span>
-                          <span className="history-time">
-                            {run.started_at ? new Date(run.started_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : '-'}
-                          </span>
+                    {pipelineData.history.slice(3).map((run) => {
+                      let timestamp = '-'
+                      if (run.started_at) {
+                        try {
+                          const date = new Date(run.started_at)
+                          if (!isNaN(date.getTime())) {
+                            timestamp = date.toLocaleTimeString('en-US', { 
+                              hour: '2-digit', 
+                              minute: '2-digit', 
+                              second: '2-digit', 
+                              hour12: false 
+                            })
+                          }
+                        } catch (e) {
+                          console.warn('Invalid date format:', run.started_at)
+                        }
+                      }
+                      return (
+                        <div key={run.run_id} className="history-item">
+                          <div className="history-row">
+                            <span className={`status-pill status-${run.status}`}>{run.status}</span>
+                            <span className="history-time">{timestamp}</span>
+                          </div>
+                          <div className="history-hint">
+                            {run.duration_seconds ? `${run.duration_seconds.toFixed(1)}s` : 'in progress'}
+                            {run.error_message ? ` • ${run.error_message}` : ''}
+                          </div>
                         </div>
-                        <div className="history-hint">
-                          {run.duration_seconds ? `${run.duration_seconds.toFixed(1)}s` : 'in progress'}
-                          {run.error_message ? ` • ${run.error_message}` : ''}
-                        </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
               </div>
