@@ -45,6 +45,7 @@ function App() {
   const [user, setUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(false)
   const [authError, setAuthError] = useState('')
+  const [pipelineViewApiId, setPipelineViewApiId] = useState(null)
   // Default to backend on 8000; can be overridden via VITE_API_BASE
   const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
 
@@ -343,6 +344,7 @@ function App() {
           <APISection
             data={sectionData.api}
             setData={(data) => updateSectionData('api', data)}
+            onViewPipeline={(apiId) => setPipelineViewApiId(apiId)}
           />
         )
       case 'gateway':
@@ -383,26 +385,48 @@ function App() {
           </div>
         ) : (
           <>
-            <Header 
-              sidebarOpen={sidebarOpen} 
-              setIsOpen={setSidebarOpen}
-              history={history}
-              onClearHistory={clearHistory}
-              user={user}
-              onLogout={handleLogout}
-            />
-            <Sidebar 
-              activeSection={activeSection} 
-              setActiveSection={setActiveSection}
-              isOpen={sidebarOpen}
-              setIsOpen={setSidebarOpen}
-            />
+            {!pipelineViewApiId && (
+              <>
+                <Header 
+                  sidebarOpen={sidebarOpen} 
+                  setIsOpen={setSidebarOpen}
+                  history={history}
+                  onClearHistory={clearHistory}
+                  user={user}
+                  onLogout={handleLogout}
+                />
+                <Sidebar 
+                  activeSection={activeSection} 
+                  setActiveSection={setActiveSection}
+                  isOpen={sidebarOpen}
+                  setIsOpen={setSidebarOpen}
+                />
+              </>
+            )}
             
-            <main className={`App-main ${sidebarOpen ? 'sidebar-open' : ''}`}>
-              <div className="main-content">
-                <div className="section-panel">
-                  {renderActiveSection()}
+            {pipelineViewApiId ? (
+              // Full page pipeline view
+              <div className="pipeline-full-page">
+                <div className="pipeline-full-page-header">
+                  <button 
+                    className="pipeline-back-button"
+                    onClick={() => setPipelineViewApiId(null)}
+                  >
+                    ← Back
+                  </button>
+                  <h2 className="pipeline-full-page-title">Pipeline View</h2>
+                  <div style={{ width: '60px' }}></div> {/* Spacer for centering */}
                 </div>
+                <div className="pipeline-full-page-content">
+                  <PipelineViewer visible apiId={pipelineViewApiId} onClose={() => setPipelineViewApiId(null)} />
+                </div>
+              </div>
+            ) : (
+              <main className={`App-main ${sidebarOpen ? 'sidebar-open' : ''}`}>
+                <div className="main-content">
+                  <div className="section-panel">
+                    {renderActiveSection()}
+                  </div>
                 
                 {/* Show DataDisplay for File Upload and API sections when sectionData exists */}
                 {activeSection !== 'websocket' && sectionData[activeSection] && (
@@ -456,8 +480,9 @@ function App() {
                     })()}
                   </div>
                 )}
-              </div>
-            </main>
+                </div>
+              </main>
+            )}
           </>
         )}
       </div>

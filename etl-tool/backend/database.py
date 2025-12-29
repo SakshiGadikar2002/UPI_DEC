@@ -705,6 +705,38 @@ async def _initialize_tables():
             ON visualization_data(timestamp DESC)
         """)
 
+        # Create failed_api_calls table for observability
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS failed_api_calls (
+                id SERIAL PRIMARY KEY,
+                api_id VARCHAR(100) NOT NULL,
+                api_name VARCHAR(255),
+                url TEXT,
+                method VARCHAR(10) DEFAULT 'GET',
+                timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                error_message TEXT NOT NULL,
+                status_code INTEGER,
+                response_time_ms INTEGER,
+                pipeline_run_id INTEGER,
+                step_name VARCHAR(50),
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+            )
+        """)
+
+        # Create indexes for failed_api_calls
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_failed_api_calls_api_id
+            ON failed_api_calls(api_id, timestamp DESC)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_failed_api_calls_timestamp
+            ON failed_api_calls(timestamp DESC)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_failed_api_calls_pipeline_run_id
+            ON failed_api_calls(pipeline_run_id)
+        """)
+
         print("[OK] Initialized PostgreSQL tables with indexes")
 
 
@@ -872,12 +904,12 @@ async def start_pipeline_run(
         )
 
         # Update the single source of truth table (pipeline_steps)
-        # Reset counts and set status to RUNNING
+        # Set status to RUNNING but preserve existing counts (they accumulate over time)
         await conn.execute("""
-            INSERT INTO pipeline_steps (pipeline_name, status, last_run_at, extract_count, transform_count, load_count)
-            VALUES ($1, 'RUNNING', $2, 0, 0, 0)
+            INSERT INTO pipeline_steps (pipeline_name, status, last_run_at)
+            VALUES ($1, 'RUNNING', $2)
             ON CONFLICT (pipeline_name) 
-            DO UPDATE SET status = 'RUNNING', last_run_at = $2, extract_count = 0, transform_count = 0, load_count = 0
+            DO UPDATE SET status = 'RUNNING', last_run_at = $2
         """, api_id, started_at)
 
         return {"run_id": run_id, "started_at": started_at, "next_run_at": next_run_at}
@@ -956,6 +988,48 @@ async def complete_pipeline_run(
                 """, pipeline_status, api_id)
         except Exception:
             pass
+
+
+async def update_pipeline_counts(connector_id: str):
+    """
+    Update pipeline_steps counts immediately after data is saved.
+    This ensures counts are updated in real-time instead of waiting for the tracker.
+    Uses a fresh connection to ensure we see committed data.
+    """
+    if pool is None:
+        logger.warning(f"[PIPELINE] Pool not available, cannot update counts for {connector_id}")
+        return
+    
+    try:
+        # Use a fresh connection to ensure we see all committed data
+        async with pool.acquire() as conn:
+            # Calculate current counts from database tables
+            extract_count = await conn.fetchval("""
+                SELECT COUNT(*) FROM api_connector_data WHERE connector_id = $1
+            """, connector_id) or 0
+            
+            transform_count = await conn.fetchval("""
+                SELECT COUNT(*) FROM api_connector_items WHERE connector_id = $1
+            """, connector_id) or 0
+            
+            load_count = transform_count  # Items are loaded to DB, so same as transform
+            
+            # Update pipeline_steps with current counts (preserve status and last_run_at if they exist)
+            await conn.execute("""
+                INSERT INTO pipeline_steps (pipeline_name, extract_count, transform_count, load_count)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (pipeline_name) 
+                DO UPDATE SET 
+                    extract_count = $2,
+                    transform_count = $3,
+                    load_count = $4
+            """, connector_id, extract_count, transform_count, load_count)
+            
+            logger.info(f"[PIPELINE] ✅ Updated counts for {connector_id}: RECORDS={extract_count}, ITEMS={transform_count}")
+            print(f"[PIPELINE] ✅ Updated counts for {connector_id}: RECORDS={extract_count}, ITEMS={transform_count}")
+    except Exception as e:
+        logger.error(f"[PIPELINE] ❌ Failed to update counts for {connector_id}: {e}", exc_info=True)
+        print(f"[PIPELINE] ❌ Failed to update counts for {connector_id}: {e}")
 
 
 async def get_pipeline_state(api_id: str, history_limit: int = 10):
@@ -1165,6 +1239,78 @@ async def save_uploaded_file_metadata(
             storage_path,
             status,
         )
+
+
+async def log_failed_api_call(
+    api_id: str,
+    api_name: str,
+    url: str,
+    method: str,
+    error_message: str,
+    status_code: int = None,
+    response_time_ms: int = None,
+    pipeline_run_id: int = None,
+    step_name: str = None,
+):
+    """Log a failed API call to the failed_api_calls table for observability."""
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+    
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO failed_api_calls (
+                    api_id, api_name, url, method, timestamp, error_message,
+                    status_code, response_time_ms, pipeline_run_id, step_name
+                )
+                VALUES ($1, $2, $3, $4, NOW(), $5, $6, $7, $8, $9)
+                """,
+                api_id,
+                api_name,
+                url,
+                method,
+                error_message,
+                status_code,
+                response_time_ms,
+                pipeline_run_id,
+                step_name,
+            )
+    except Exception as e:
+        logger.error(f"[FAILED_API] Failed to log failed API call for {api_id}: {e}")
+
+
+async def get_failed_api_calls(api_id: str = None, limit: int = 100):
+    """Get failed API calls, optionally filtered by api_id."""
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+    
+    async with pool.acquire() as conn:
+        if api_id:
+            rows = await conn.fetch(
+                """
+                SELECT id, api_id, api_name, url, method, timestamp, error_message,
+                       status_code, response_time_ms, pipeline_run_id, step_name, created_at
+                FROM failed_api_calls
+                WHERE api_id = $1
+                ORDER BY timestamp DESC
+                LIMIT $2
+                """,
+                api_id,
+                limit,
+            )
+        else:
+            rows = await conn.fetch(
+                """
+                SELECT id, api_id, api_name, url, method, timestamp, error_message,
+                       status_code, response_time_ms, pipeline_run_id, step_name, created_at
+                FROM failed_api_calls
+                ORDER BY timestamp DESC
+                LIMIT $1
+                """,
+                limit,
+            )
+        return [dict(row) for row in rows]
 
 
 async def update_file_status(file_id: str, status: str):

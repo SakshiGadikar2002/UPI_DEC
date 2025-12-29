@@ -4,8 +4,9 @@ import { checkBackendHealth } from '../utils/backendCheck'
 import { removeDuplicates } from '../utils/duplicateRemover'
 import { getRealtimeWebSocket } from '../utils/realtimeWebSocket'
 import PipelineViewer from './PipelineViewer'
+import FailedApiCallsViewer from './FailedApiCallsViewer'
 
-function APISection({ data, setData }) {
+function APISection({ data, setData, onViewPipeline = null }) {
   const apiBase = import.meta.env.VITE_API_BASE || ''
   // Start with an empty URL; user or Quick Connect will provide it.
   // This avoids hardcoding any specific provider (like Binance) in the UI state.
@@ -40,7 +41,7 @@ function APISection({ data, setData }) {
   const [activeError, setActiveError] = useState('')
   const [selectedActiveApi, setSelectedActiveApi] = useState(null)
   const [showPipelineView, setShowPipelineView] = useState(false)
-  const [pipelineViewExpanded, setPipelineViewExpanded] = useState(false)
+  const [showFailedApisView, setShowFailedApisView] = useState(false)
   const [formExpanded, setFormExpanded] = useState(false)
   const [scheduledApisExpanded, setScheduledApisExpanded] = useState(false)
   const wsRef = useRef(null)
@@ -979,401 +980,481 @@ function APISection({ data, setData }) {
   }, [])
 
   return (
-    <div className="section-container">
+    <div className="api-section-container">
       <div className="section-header">
         <div className="section-header-top">
           <div>
-            <h2>API Links Section</h2>
-            <p>Extract data from REST API endpoints (non-realtime)</p>
+            <h2>🔗 API Links</h2>
+            <p>Extract data from REST API endpoints</p>
           </div>
-          <button 
-            className="collapse-toggle"
-            onClick={() => setQuickConnectExpanded(!quickConnectExpanded)}
-            aria-label={quickConnectExpanded ? 'Collapse Quick Connect' : 'Expand Quick Connect'}
-            title={quickConnectExpanded ? 'Collapse Quick Connect' : 'Expand Quick Connect'}
-          >
-            <span className={`collapse-icon ${quickConnectExpanded ? 'expanded' : ''}`}>▼</span>
-          </button>
         </div>
       </div>
 
-      <div className="section-content">
-        <div className="active-api-panel">
-          <div className="active-api-header">
-            <div>
-              <h3>Scheduled APIs (Job Scheduler)</h3>
+      <div className="api-section-content">
+        <div className="api-scheduled-panel">
+          <div className="api-scheduled-header">
+            <div className="api-scheduled-title-group">
+              <div className="api-section-icon">
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="2" y="4" width="16" height="12" rx="2"/>
+                  <path d="M2 8h16M8 4V2"/>
+                </svg>
+              </div>
+              <div>
+                <h3 className="api-scheduled-title">Scheduled APIs</h3>
+                <p className="api-scheduled-subtitle">Job Scheduler</p>
+              </div>
             </div>
-            <div className="active-api-actions" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <div className="api-scheduled-actions">
               <button
-                className="extract-button-small"
+                className="api-action-btn api-refresh-btn"
                 onClick={fetchActiveApis}
                 disabled={activeLoading}
               >
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M1 7h12M7 1v6m0 0l-4-4m4 4l4-4"/>
+                </svg>
                 {activeLoading ? 'Refreshing...' : 'Refresh'}
               </button>
+              <button
+                className="api-action-btn api-failed-btn"
+                onClick={() => {
+                  setShowFailedApisView(true)
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="7" cy="7" r="5"/>
+                  <path d="M7 4v3M7 9h.01"/>
+                </svg>
+                Failed APIs
+              </button>
               <button 
-                className="collapse-toggle"
+                className="api-collapse-btn"
                 onClick={() => setScheduledApisExpanded(!scheduledApisExpanded)}
                 aria-label={scheduledApisExpanded ? 'Collapse Scheduled APIs' : 'Expand Scheduled APIs'}
                 title={scheduledApisExpanded ? 'Collapse Scheduled APIs' : 'Expand Scheduled APIs'}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px 8px' }}
               >
-                <span className={`collapse-icon ${scheduledApisExpanded ? 'expanded' : ''}`}>▼</span>
+                <span className={`api-collapse-icon ${scheduledApisExpanded ? 'expanded' : ''}`}>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M4 6l4 4 4-4"/>
+                  </svg>
+                </span>
               </button>
             </div>
           </div>
           {scheduledApisExpanded && (
-            <>
-              {activeError && <div className="error-message">{activeError}</div>}
-              <div className="active-api-grid">
-            {activeLoading && activeApis.length === 0 && (
-              <div className="active-api-hint">Loading scheduled APIs…</div>
-            )}
-            {!activeLoading && activeApis.length === 0 && (
-              <div className="active-api-hint">No active APIs detected yet.</div>
-            )}
-            {activeApis.map((api) => {
-              const lastSeen = api.last_timestamp
-                ? new Date(api.last_timestamp).toLocaleString()
-                : 'No data yet'
-              return (
-                <div className="pipeline-card-enhanced" key={api.connector_id}>
-                  <div className="pipeline-card-header">
-                    <div className="pipeline-card-title-group">
-                      {api.status === 'ACTIVE' && (
-                        <span className="pipeline-status-indicator active"></span>
-                      )}
-                      <div className="pipeline-card-title-info">
-                        <h4 className="pipeline-card-name">{api.name}</h4>
-                        <p className="pipeline-card-url">{api.api_url}</p>
+            <div className="api-scheduled-content">
+              {activeError && <div className="api-error-banner">{activeError}</div>}
+              <div className="api-cards-grid">
+                {activeLoading && activeApis.length === 0 && (
+                  <div className="api-empty-state">
+                    <div className="api-empty-icon">⏳</div>
+                    <p>Loading scheduled APIs…</p>
+                  </div>
+                )}
+                {!activeLoading && activeApis.length === 0 && (
+                  <div className="api-empty-state">
+                    <div className="api-empty-icon">📋</div>
+                    <p>No active APIs detected yet.</p>
+                    <span className="api-empty-hint">Start a new API connection to see it here</span>
+                  </div>
+                )}
+                {activeApis.map((api) => {
+                  const lastSeen = api.last_timestamp
+                    ? new Date(api.last_timestamp).toLocaleString()
+                    : 'No data yet'
+                  return (
+                    <div className="api-card" key={api.connector_id}>
+                      <div className="api-card-header">
+                        <div className="api-card-title-section">
+                          {api.status === 'ACTIVE' && (
+                            <span className="api-status-dot active"></span>
+                          )}
+                          <div className="api-card-info">
+                            <h4 className="api-card-name">{api.name}</h4>
+                            <p className="api-card-url">{api.api_url}</p>
+                          </div>
+                        </div>
+                        <button
+                          className="api-card-action-btn"
+                          onClick={() => {
+                            if (onViewPipeline) {
+                              onViewPipeline(api.connector_id)
+                            } else {
+                              setSelectedActiveApi(api.connector_id)
+                              setShowPipelineView(true)
+                            }
+                          }}
+                        >
+                          View Pipeline
+                          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M5 2l5 5-5 5"/>
+                          </svg>
+                        </button>
+                      </div>
+                      <div className="api-card-stats">
+                        <div className="api-stat">
+                          <span className="api-stat-label">Status</span>
+                          <span className={`api-stat-value api-status-${api.status?.toLowerCase() || 'inactive'}`}>
+                            {api.status || 'INACTIVE'}
+                          </span>
+                        </div>
+                        <div className="api-stat">
+                          <span className="api-stat-label">Records</span>
+                          <span className="api-stat-value">{api.total_records || 0}</span>
+                        </div>
+                        <div className="api-stat">
+                          <span className="api-stat-label">Items</span>
+                          <span className="api-stat-value">{api.total_items || 0}</span>
+                        </div>
+                        <div className="api-stat">
+                          <span className="api-stat-label">Last Data</span>
+                          <span className="api-stat-value api-stat-time">{lastSeen}</span>
+                        </div>
                       </div>
                     </div>
-                    <button
-                      className="pipeline-view-button"
-                      onClick={() => {
-                        setSelectedActiveApi(api.connector_id)
-                        setShowPipelineView(true)
-                        setPipelineViewExpanded(true)
-                      }}
-                    >
-                      View Pipeline →
-                    </button>
-                  </div>
-                  <div className="pipeline-card-stats">
-                    <div className="pipeline-stat-item">
-                      <span className="pipeline-stat-label">Status</span>
-                      <span className={`pipeline-stat-value status-${api.status?.toLowerCase() || 'inactive'}`}>
-                        {api.status || 'INACTIVE'}
-                      </span>
-                    </div>
-                    <div className="pipeline-stat-item">
-                      <span className="pipeline-stat-label">Records</span>
-                      <span className="pipeline-stat-value">{api.total_records || 0}</span>
-                    </div>
-                    <div className="pipeline-stat-item">
-                      <span className="pipeline-stat-label">Items</span>
-                      <span className="pipeline-stat-value">{api.total_items || 0}</span>
-                    </div>
-                    <div className="pipeline-stat-item">
-                      <span className="pipeline-stat-label">Last Data</span>
-                      <span className="pipeline-stat-value time">{lastSeen}</span>
-                    </div>
-                  </div>
-                </div>
-              )
-            })}
+                  )
+                })}
               </div>
-            </>
+            </div>
           )}
         </div>
 
-        {showPipelineView && selectedActiveApi && (
-          <div className="collapsible-section">
-            <div className="collapsible-header" onClick={() => setPipelineViewExpanded(!pipelineViewExpanded)}>
-              <h3>View Pipeline</h3>
-              <button 
-                className="collapse-toggle"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setPipelineViewExpanded(!pipelineViewExpanded)
-                }}
-                aria-label={pipelineViewExpanded ? 'Collapse Pipeline View' : 'Expand Pipeline View'}
-              >
-                <span className={`collapse-icon ${pipelineViewExpanded ? 'expanded' : ''}`}>▼</span>
-              </button>
-            </div>
-            {pipelineViewExpanded && (
-              <div className="collapsible-content">
-                <div className="active-pipeline-wrapper">
-                  <PipelineViewer visible apiId={selectedActiveApi} onClose={() => {
-                    setShowPipelineView(false)
-                    setPipelineViewExpanded(false)
-                  }} />
-                </div>
+        {/* Pipeline Viewer Modal Popup (fallback if onViewPipeline not provided) */}
+        {showPipelineView && selectedActiveApi && !onViewPipeline && (
+          <div className="pipeline-viewer-modal-overlay" onClick={() => setShowPipelineView(false)}>
+            <div className="pipeline-viewer-modal-content" onClick={(e) => e.stopPropagation()}>
+              <div className="pipeline-viewer-modal-header">
+                <h3>Pipeline View - {selectedActiveApi}</h3>
+                <button 
+                  className="pipeline-viewer-modal-close"
+                  onClick={() => setShowPipelineView(false)}
+                  aria-label="Close"
+                >
+                  ×
+                </button>
               </div>
-            )}
+              <div className="pipeline-viewer-modal-body">
+                <PipelineViewer visible apiId={selectedActiveApi} onClose={() => setShowPipelineView(false)} />
+              </div>
+            </div>
           </div>
         )}
 
-        {/* Quick Connect Section - Collapsible */}
-        {quickConnectExpanded && (
-          <div className="quick-connect-section">
-            <div className="quick-connect-header">
-              <h3>
-                <span className="rocket-icon">🚀</span>
-                Quick Connect - Non-Realtime Crypto Data
-              </h3>
-              <p>Click any button below to instantly connect to real-time cryptocurrency data:</p>
-            </div>
-            <div className="quick-connect-grid">
-              {quickConnectOptions.map((option, index) => (
-                <button
-                  key={index}
-                  className="quick-connect-btn"
-                  onClick={() => handleQuickConnect(option)}
-                  disabled={!backendOnline}
+        {/* Failed APIs Modal Popup */}
+        {showFailedApisView && (
+          <div className="failed-apis-modal-overlay" onClick={() => setShowFailedApisView(false)}>
+            <div className="failed-apis-modal-content" onClick={(e) => e.stopPropagation()}>
+              <div className="failed-apis-modal-header">
+                <h3>Failed API Calls (All APIs)</h3>
+                <button 
+                  className="failed-apis-modal-close"
+                  onClick={() => setShowFailedApisView(false)}
+                  aria-label="Close"
                 >
-                  <div className="quick-connect-title">{option.title}</div>
-                  <div className="quick-connect-desc">{option.description}</div>
+                  ×
                 </button>
-              ))}
-            </div>
-            {/* OR Divider */}
-            <div className="or-divider">
-              <div className="or-line"></div>
-              <span className="or-text">OR</span>
-              <div className="or-line"></div>
+              </div>
+              <div className="failed-apis-modal-body">
+                <FailedApiCallsViewer apiId={null} onClose={() => setShowFailedApisView(false)} />
+              </div>
             </div>
           </div>
         )}
+
+        {/* Quick Connect Section - Between Scheduled APIs and Configuration */}
+        <div className="api-quick-connect-panel">
+          <div className="api-quick-connect-header" onClick={() => setQuickConnectExpanded(!quickConnectExpanded)}>
+            <div className="api-quick-connect-title-group">
+              <div className="api-section-icon">
+                <span style={{ fontSize: '1.2rem' }}>🚀</span>
+              </div>
+              <div>
+                <h3 className="api-quick-connect-title">Quick Connect</h3>
+                <p className="api-quick-connect-subtitle">Instantly connect to popular cryptocurrency APIs</p>
+              </div>
+            </div>
+            <button 
+              className="api-collapse-btn"
+              onClick={(e) => {
+                e.stopPropagation()
+                setQuickConnectExpanded(!quickConnectExpanded)
+              }}
+              aria-label={quickConnectExpanded ? 'Collapse Quick Connect' : 'Expand Quick Connect'}
+            >
+              <span className={`api-collapse-icon ${quickConnectExpanded ? 'expanded' : ''}`}>
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M4 6l4 4 4-4"/>
+                </svg>
+              </span>
+            </button>
+          </div>
+          {quickConnectExpanded && (
+            <div className="api-quick-connect-content">
+              <div className="api-quick-connect-grid">
+                {quickConnectOptions.map((option, index) => (
+                  <button
+                    key={index}
+                    className="api-quick-connect-card"
+                    onClick={() => handleQuickConnect(option)}
+                    disabled={!backendOnline}
+                  >
+                    <div className="api-quick-connect-card-title">{option.title}</div>
+                    <div className="api-quick-connect-card-desc">{option.description}</div>
+                  </button>
+                ))}
+              </div>
+              {/* OR Divider */}
+              <div className="api-divider">
+                <div className="api-divider-line"></div>
+                <span className="api-divider-text">OR</span>
+                <div className="api-divider-line"></div>
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Manual API Configuration */}
-        <div className="collapsible-section">
-          <div className="collapsible-header" onClick={() => setFormExpanded(!formExpanded)}>
-            <h3>API Configuration Form</h3>
+        <div className="api-config-panel">
+          <div className="api-config-header" onClick={() => setFormExpanded(!formExpanded)}>
+            <div className="api-config-title-group">
+              <div className="api-section-icon">
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M10 2v16M2 10h16"/>
+                </svg>
+              </div>
+              <div>
+                <h3 className="api-config-title">API Configuration</h3>
+                <p className="api-config-subtitle">Configure your API connection</p>
+              </div>
+            </div>
             <button 
-              className="collapse-toggle"
+              className="api-collapse-btn"
               onClick={(e) => {
                 e.stopPropagation()
                 setFormExpanded(!formExpanded)
               }}
               aria-label={formExpanded ? 'Collapse Form' : 'Expand Form'}
             >
-              <span className={`collapse-icon ${formExpanded ? 'expanded' : ''}`}>▼</span>
+              <span className={`api-collapse-icon ${formExpanded ? 'expanded' : ''}`}>
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M4 6l4 4 4-4"/>
+                </svg>
+              </span>
             </button>
           </div>
           {formExpanded && (
-            <div className="collapsible-content">
-              <div className="manual-api-config">
-          <div className="api-config-row">
-            <div className="input-group">
-              <label>API URL</label>
-              <input
-                type="text"
-                value={apiUrl}
-                onChange={(e) => setApiUrl(e.target.value)}
-                placeholder="https://api.example.com/data"
-                className="url-input"
-                disabled={!backendOnline}
-              />
-            </div>
-            <div className="input-group">
-              <label>HTTP Method</label>
-              <select
-                value={httpMethod}
-                onChange={(e) => setHttpMethod(e.target.value)}
-                className="url-input"
-                disabled={!backendOnline}
-              >
-                <option value="GET">GET</option>
-                <option value="POST">POST</option>
-                <option value="PUT">PUT</option>
-                <option value="PATCH">PATCH</option>
-                <option value="DELETE">DELETE</option>
-              </select>
-            </div>
-          </div>
+            <div className="api-config-content">
+              <div className="api-form">
+                <div className="api-form-row">
+                  <div className="api-form-group">
+                    <label className="api-form-label">API URL</label>
+                    <input
+                      type="text"
+                      value={apiUrl}
+                      onChange={(e) => setApiUrl(e.target.value)}
+                      placeholder="https://api.example.com/data"
+                      className="api-form-input"
+                      disabled={!backendOnline}
+                    />
+                  </div>
+                  <div className="api-form-group">
+                    <label className="api-form-label">HTTP Method</label>
+                    <select
+                      value={httpMethod}
+                      onChange={(e) => setHttpMethod(e.target.value)}
+                      className="api-form-input api-form-select"
+                      disabled={!backendOnline}
+                    >
+                      <option value="GET">GET</option>
+                      <option value="POST">POST</option>
+                      <option value="PUT">PUT</option>
+                      <option value="PATCH">PATCH</option>
+                      <option value="DELETE">DELETE</option>
+                    </select>
+                  </div>
+                </div>
 
-          <div className="api-config-row">
-            <div className="input-group">
-              <label>Headers (JSON or key:value format)</label>
-              <textarea
-                value={headers}
-                onChange={(e) => setHeaders(e.target.value)}
-                placeholder='{"Authorization": "Bearer token"}\n\nAuthorization: Bearer token'
-                className="headers-textarea"
-                rows={4}
-                disabled={!backendOnline}
-              />
-            </div>
-            <div className="input-group">
-              <label>Query Parameters (JSON or key=value format)</label>
-              <textarea
-                value={queryParams}
-                onChange={(e) => setQueryParams(e.target.value)}
-                placeholder='{"limit": 100, "page": 1}\n\nlimit=100&page=1'
-                className="headers-textarea"
-                rows={4}
-                disabled={!backendOnline}
-              />
-            </div>
-          </div>
+                <div className="api-form-row">
+                  <div className="api-form-group">
+                    <label className="api-form-label">Headers (JSON or key:value format)</label>
+                    <textarea
+                      value={headers}
+                      onChange={(e) => setHeaders(e.target.value)}
+                      placeholder='{"Authorization": "Bearer token"}\n\nAuthorization: Bearer token'
+                      className="api-form-textarea"
+                      rows={4}
+                      disabled={!backendOnline}
+                    />
+                  </div>
+                  <div className="api-form-group">
+                    <label className="api-form-label">Query Parameters (JSON or key=value format)</label>
+                    <textarea
+                      value={queryParams}
+                      onChange={(e) => setQueryParams(e.target.value)}
+                      placeholder='{"limit": 100, "page": 1}\n\nlimit=100&page=1'
+                      className="api-form-textarea"
+                      rows={4}
+                      disabled={!backendOnline}
+                    />
+                  </div>
+                </div>
 
-          <div className="api-config-row">
-            <div className="input-group">
-              <label>Authentication</label>
-              <select
-                value={authentication}
-                onChange={(e) => setAuthentication(e.target.value)}
-                className="url-input"
-                disabled={!backendOnline}
-              >
-                <option value="None">None - No authentication required</option>
-                <option value="API Key">API Key - Simple API key in headers</option>
-                <option value="Bearer Token">Bearer Token - OAuth 2.0 Bearer token</option>
-                <option value="Basic Auth">Basic Auth - HTTP Basic Authentication</option>
-              </select>
-            </div>
-            <div className="input-group">
-              <label>Ingestion Mode</label>
-              <select
-                value={ingestionMode}
-                className="url-input"
-                disabled
-              >
-                <option value="Streaming">Streaming</option>
-              </select>
-            </div>
-          </div>
+                <div className="api-form-row">
+                  <div className="api-form-group">
+                    <label className="api-form-label">Authentication</label>
+                    <select
+                      value={authentication}
+                      onChange={(e) => setAuthentication(e.target.value)}
+                      className="api-form-input api-form-select"
+                      disabled={!backendOnline}
+                    >
+                      <option value="None">None - No authentication required</option>
+                      <option value="API Key">API Key - Simple API key in headers</option>
+                      <option value="Bearer Token">Bearer Token - OAuth 2.0 Bearer token</option>
+                      <option value="Basic Auth">Basic Auth - HTTP Basic Authentication</option>
+                    </select>
+                  </div>
+                  <div className="api-form-group">
+                    <label className="api-form-label">Ingestion Mode</label>
+                    <select
+                      value={ingestionMode}
+                      className="api-form-input api-form-select"
+                      disabled
+                    >
+                      <option value="Streaming">Streaming</option>
+                    </select>
+                  </div>
+                </div>
 
-          {ingestionMode === 'Streaming' && (
-            <div className="api-config-row">
-              <div className="input-group">
-                <label>Polling Interval (ms) - REST only</label>
-                <input
-                  type="number"
-                  value={pollingInterval}
-                  onChange={(e) => setPollingInterval(parseInt(e.target.value) || 1000)}
-                  min="100"
-                  max="60000"
-                  step="100"
-                  className="url-input"
-                  disabled={!backendOnline}
-                />
-              </div>
-              <div className="input-group"></div>
-            </div>
-          )}
+                {ingestionMode === 'Streaming' && (
+                  <div className="api-form-row">
+                    <div className="api-form-group">
+                      <label className="api-form-label">Polling Interval (ms) - REST only</label>
+                      <input
+                        type="number"
+                        value={pollingInterval}
+                        onChange={(e) => setPollingInterval(parseInt(e.target.value) || 1000)}
+                        min="100"
+                        max="60000"
+                        step="100"
+                        className="api-form-input"
+                        disabled={!backendOnline}
+                      />
+                    </div>
+                    <div className="api-form-group"></div>
+                  </div>
+                )}
 
-          {authentication === 'API Key' && (
-            <div className="input-group">
-              <label>API Key <span style={{ color: '#f44336' }}>*</span></label>
-              <input
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="Enter your real API key (required)"
-                className="url-input"
-                disabled={!backendOnline}
-              />
-              <small style={{ color: '#666', fontSize: '0.85rem', marginTop: '5px', display: 'block' }}>
-                💡 <strong>Required:</strong> You must enter a valid API key. Placeholder values like "your-api-key-here" are not accepted.<br/>
-                <strong>How it works:</strong> API Key will be added to headers as <code>X-API-Key</code> header.<br/>
-                <strong>Test URL:</strong> <code>https://httpbin.org/headers</code> - This endpoint shows all request headers, so you can verify your API key is being sent correctly.<br/>
-                <strong>💡 Tip:</strong> Use any API key value (e.g., "test-key-123") with httpbin.org/headers to test - it will show your API key in the response!
-              </small>
-            </div>
-          )}
+                {authentication === 'API Key' && (
+                  <div className="api-form-group">
+                    <label className="api-form-label">API Key <span className="api-required">*</span></label>
+                    <input
+                      type="password"
+                      value={apiKey}
+                      onChange={(e) => setApiKey(e.target.value)}
+                      placeholder="Enter your real API key (required)"
+                      className="api-form-input"
+                      disabled={!backendOnline}
+                    />
+                    <small className="api-form-hint">
+                      💡 <strong>Required:</strong> You must enter a valid API key. Placeholder values like "your-api-key-here" are not accepted.<br/>
+                      <strong>How it works:</strong> API Key will be added to headers as <code>X-API-Key</code> header.<br/>
+                      <strong>Test URL:</strong> <code>https://httpbin.org/headers</code> - This endpoint shows all request headers, so you can verify your API key is being sent correctly.<br/>
+                      <strong>💡 Tip:</strong> Use any API key value (e.g., "test-key-123") with httpbin.org/headers to test - it will show your API key in the response!
+                    </small>
+                  </div>
+                )}
 
-          {authentication === 'HMAC' && (
-            <>
-              <div className="input-group">
-                <label>API Key <span style={{ color: '#f44336' }}>*</span></label>
-                <input
-                  type="password"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="Enter your real API key (required)"
-                  className="url-input"
-                  disabled={!backendOnline}
-                />
-              </div>
-              <div className="input-group">
-                <label>API Secret <span style={{ color: '#f44336' }}>*</span></label>
-                <input
-                  type="password"
-                  value={apiSecret}
-                  onChange={(e) => setApiSecret(e.target.value)}
-                  placeholder="Enter your real API secret (required)"
-                  className="url-input"
-                  disabled={!backendOnline}
-                />
-              </div>
-              <small style={{ color: '#666', fontSize: '0.85rem', marginTop: '5px', display: 'block' }}>
-                💡 <strong>Required:</strong> Both API Key and Secret are required. Placeholder values are not accepted.<br/>
-                <strong>How it works:</strong> HMAC-SHA256 signature authentication used by Binance, OKX, and other crypto exchanges.<br/>
-                <strong>Test URLs:</strong><br/>
-                • Binance: <code>https://api.binance.com/api/v3/account</code> (requires valid API key/secret)<br/>
-                • OKX: <code>https://www.okx.com/api/v5/account/balance</code> (requires valid API key/secret)<br/>
-                <strong>💡 Tip:</strong> Don't have credentials? Switch to <strong>"None"</strong> or <strong>"Basic Auth"</strong> to test without real credentials!
-              </small>
-            </>
-          )}
+                {authentication === 'HMAC' && (
+                  <>
+                    <div className="api-form-group">
+                      <label className="api-form-label">API Key <span className="api-required">*</span></label>
+                      <input
+                        type="password"
+                        value={apiKey}
+                        onChange={(e) => setApiKey(e.target.value)}
+                        placeholder="Enter your real API key (required)"
+                        className="api-form-input"
+                        disabled={!backendOnline}
+                      />
+                    </div>
+                    <div className="api-form-group">
+                      <label className="api-form-label">API Secret <span className="api-required">*</span></label>
+                      <input
+                        type="password"
+                        value={apiSecret}
+                        onChange={(e) => setApiSecret(e.target.value)}
+                        placeholder="Enter your real API secret (required)"
+                        className="api-form-input"
+                        disabled={!backendOnline}
+                      />
+                    </div>
+                    <small className="api-form-hint">
+                      💡 <strong>Required:</strong> Both API Key and Secret are required. Placeholder values are not accepted.<br/>
+                      <strong>How it works:</strong> HMAC-SHA256 signature authentication used by Binance, OKX, and other crypto exchanges.<br/>
+                      <strong>Test URLs:</strong><br/>
+                      • Binance: <code>https://api.binance.com/api/v3/account</code> (requires valid API key/secret)<br/>
+                      • OKX: <code>https://www.okx.com/api/v5/account/balance</code> (requires valid API key/secret)<br/>
+                      <strong>💡 Tip:</strong> Don't have credentials? Switch to <strong>"None"</strong> or <strong>"Basic Auth"</strong> to test without real credentials!
+                    </small>
+                  </>
+                )}
 
-          {authentication === 'Bearer Token' && (
-            <div className="input-group">
-              <label>Bearer Token <span style={{ color: '#f44336' }}>*</span></label>
-              <input
-                type="password"
-                value={bearerToken}
-                onChange={(e) => setBearerToken(e.target.value)}
-                placeholder="Enter your real bearer token (required)"
-                className="url-input"
-                disabled={!backendOnline}
-              />
-              <small style={{ color: '#666', fontSize: '0.85rem', marginTop: '5px', display: 'block' }}>
-                💡 <strong>Required:</strong> You must enter a valid bearer token. Placeholder values are not accepted.<br/>
-                <strong>How it works:</strong> Bearer token will be added to headers as <code>Authorization: Bearer YOUR_TOKEN</code>.<br/>
-                <strong>Test URL:</strong> <code>https://httpbin.org/headers</code> - This endpoint shows all request headers, so you can verify your Bearer token is being sent correctly.<br/>
-                <strong>💡 Tip:</strong> Use any token value (e.g., "test-token-123") with httpbin.org/headers to test - it will show your Bearer token in the response!<br/>
-                <strong>Real APIs:</strong> GitHub, Twitter, and other OAuth 2.0 APIs use Bearer tokens (requires real tokens from those services).
-              </small>
-            </div>
-          )}
+                {authentication === 'Bearer Token' && (
+                  <div className="api-form-group">
+                    <label className="api-form-label">Bearer Token <span className="api-required">*</span></label>
+                    <input
+                      type="password"
+                      value={bearerToken}
+                      onChange={(e) => setBearerToken(e.target.value)}
+                      placeholder="Enter your real bearer token (required)"
+                      className="api-form-input"
+                      disabled={!backendOnline}
+                    />
+                    <small className="api-form-hint">
+                      💡 <strong>Required:</strong> You must enter a valid bearer token. Placeholder values are not accepted.<br/>
+                      <strong>How it works:</strong> Bearer token will be added to headers as <code>Authorization: Bearer YOUR_TOKEN</code>.<br/>
+                      <strong>Test URL:</strong> <code>https://httpbin.org/headers</code> - This endpoint shows all request headers, so you can verify your Bearer token is being sent correctly.<br/>
+                      <strong>💡 Tip:</strong> Use any token value (e.g., "test-token-123") with httpbin.org/headers to test - it will show your Bearer token in the response!<br/>
+                      <strong>Real APIs:</strong> GitHub, Twitter, and other OAuth 2.0 APIs use Bearer tokens (requires real tokens from those services).
+                    </small>
+                  </div>
+                )}
 
-          {authentication === 'Basic Auth' && (
-            <>
-              <div className="input-group">
-                <label>Username</label>
-                <input
-                  type="text"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder="e.g., admin, user, api_user"
-                  className="url-input"
-                  disabled={!backendOnline}
-                />
-              </div>
-              <div className="input-group">
-                <label>Password</label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter your password"
-                  className="url-input"
-                  disabled={!backendOnline}
-                />
-              </div>
-              <small style={{ color: '#666', fontSize: '0.85rem', marginTop: '5px', display: 'block' }}>
-                💡 <strong>Example:</strong> Basic Auth encodes username:password in Base64 and adds to <code>Authorization: Basic BASE64_STRING</code> header.<br/>
-                <strong>Test URLs:</strong><br/>
-                • HTTPBin (public test): <code>https://httpbin.org/basic-auth/user/passwd</code> (use username: "user", password: "passwd")<br/>
-                • Custom APIs: Any API that uses HTTP Basic Authentication<br/>
-                <strong>Note:</strong> HTTPBin is a public testing service - perfect for testing Basic Auth without real credentials!
-              </small>
-            </>
-          )}
+                {authentication === 'Basic Auth' && (
+                  <>
+                    <div className="api-form-group">
+                      <label className="api-form-label">Username</label>
+                      <input
+                        type="text"
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        placeholder="e.g., admin, user, api_user"
+                        className="api-form-input"
+                        disabled={!backendOnline}
+                      />
+                    </div>
+                    <div className="api-form-group">
+                      <label className="api-form-label">Password</label>
+                      <input
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="Enter your password"
+                        className="api-form-input"
+                        disabled={!backendOnline}
+                      />
+                    </div>
+                    <small className="api-form-hint">
+                      💡 <strong>Example:</strong> Basic Auth encodes username:password in Base64 and adds to <code>Authorization: Basic BASE64_STRING</code> header.<br/>
+                      <strong>Test URLs:</strong><br/>
+                      • HTTPBin (public test): <code>https://httpbin.org/basic-auth/user/passwd</code> (use username: "user", password: "passwd")<br/>
+                      • Custom APIs: Any API that uses HTTP Basic Authentication<br/>
+                      <strong>Note:</strong> HTTPBin is a public testing service - perfect for testing Basic Auth without real credentials!
+                    </small>
+                  </>
+                )}
 
 
           {connectorId && (
@@ -1445,36 +1526,32 @@ function APISection({ data, setData }) {
             </div>
           )}
 
-          <div className="button-group">
-            {ingestionMode === 'Streaming' ? (
-              <button 
-                onClick={handleStartOrStopStream} 
-                disabled={loading || !apiUrl || !backendOnline}
-                className={connectorStatus === 'running' ? 'stop-button' : 'extract-button'}
-                style={connectorStatus === 'running' ? {
-                  backgroundColor: '#f44336',
-                  color: 'white'
-                } : {}}
-              >
-                {loading 
-                  ? 'Creating Connector...' 
-                  : connectorStatus === 'running'
-                    ? 'Stop Streaming'
-                    : 'Start Streaming'}
-              </button>
-            ) : (
-              <button 
-                onClick={handleExtract} 
-                disabled={loading || !apiUrl || !backendOnline}
-                className="extract-button"
-              >
-                {loading ? 'Extracting...' : 'Extract from API'}
-              </button>
-            )}
-            {error && <div className="error-message" style={{ marginTop: '15px' }}>{error}</div>}
-          </div>
+                <div className="api-form-actions">
+                  {ingestionMode === 'Streaming' ? (
+                    <button 
+                      onClick={handleStartOrStopStream} 
+                      disabled={loading || !apiUrl || !backendOnline}
+                      className={`api-submit-btn ${connectorStatus === 'running' ? 'api-stop-btn' : 'api-start-btn'}`}
+                    >
+                      {loading 
+                        ? 'Creating Connector...' 
+                        : connectorStatus === 'running'
+                          ? 'Stop Streaming'
+                          : 'Start Streaming'}
+                    </button>
+                  ) : (
+                    <button 
+                      onClick={handleExtract} 
+                      disabled={loading || !apiUrl || !backendOnline}
+                      className="api-submit-btn api-start-btn"
+                    >
+                      {loading ? 'Extracting...' : 'Extract from API'}
+                    </button>
+                  )}
+                  {error && <div className="api-error-message">{error}</div>}
+                </div>
+              </div>
             </div>
-          </div>
           )}
         </div>
       </div>

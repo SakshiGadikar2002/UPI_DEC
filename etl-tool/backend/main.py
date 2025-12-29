@@ -40,6 +40,8 @@ from database import (
     log_user_event,
     save_uploaded_file_metadata,
     get_pipeline_state,
+    update_pipeline_counts,
+    get_failed_api_calls,
 )
 from models.websocket_data import WebSocketMessage, WebSocketBatch
 from models.connector import (
@@ -566,6 +568,16 @@ async def save_api_items_to_database(connector_id: str, api_name: str, response_
                     logger.debug(f"[ITEMS] Scheduled visualization_data update for {connector_id}")
                 except Exception as viz_error:
                     logger.warning(f"[ITEMS] Could not schedule visualization_data update for {connector_id}: {viz_error}")
+            
+            # Update pipeline counts immediately after saving items (real-time count updates)
+            # Schedule in background to avoid blocking, but ensure it runs
+            if items_inserted > 0:
+                try:
+                    # Use create_task to run async without blocking
+                    loop = asyncio.get_event_loop()
+                    loop.create_task(update_pipeline_counts(connector_id))
+                except Exception as count_error:
+                    logger.error(f"[ITEMS] ❌ Could not schedule pipeline count update for {connector_id}: {count_error}", exc_info=True)
     
     except Exception as e:
         logger.error(f"[ITEMS] ❌ Error saving API items: {e}")
@@ -1037,31 +1049,38 @@ async def save_to_database(message: dict):
                         session_id,
                     )
                 except Exception as fk_error:
-                    if "foreign key constraint" in str(fk_error).lower():
+                    error_msg = str(fk_error)
+                    if "foreign key constraint" in error_msg.lower():
                         # Allow scheduled APIs without a connector record
-                        connector_id = f"scheduled_{connector_id}"
-                        return await conn.fetchval(
-                            """
-                            INSERT INTO api_connector_data (
-                                connector_id, timestamp, exchange, instrument, price, data, 
-                                message_type, raw_response, status_code, response_time_ms, source_id, session_id
-                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-                            RETURNING id
-                            """,
-                            connector_id,
-                            timestamp,
-                            exchange,
-                            row_instrument,
-                            row_price,
-                            json.dumps(row_data),
-                            message_type,
-                            json.dumps(row_raw) if row_raw is not None else None,
-                            status_code,
-                            response_time_ms,
-                            row_source_id,
-                            session_id,
-                        )
-                    raise
+                        try:
+                            connector_id = f"scheduled_{connector_id}"
+                            return await conn.fetchval(
+                                """
+                                INSERT INTO api_connector_data (
+                                    connector_id, timestamp, exchange, instrument, price, data, 
+                                    message_type, raw_response, status_code, response_time_ms, source_id, session_id
+                                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                                RETURNING id
+                                """,
+                                connector_id,
+                                timestamp,
+                                exchange,
+                                row_instrument,
+                                row_price,
+                                json.dumps(row_data),
+                                message_type,
+                                json.dumps(row_raw) if row_raw is not None else None,
+                                status_code,
+                                response_time_ms,
+                                row_source_id,
+                                session_id,
+                            )
+                        except Exception as retry_error:
+                            # Re-raise with more context
+                            raise Exception(f"Foreign key constraint error (retry failed): {str(retry_error)}")
+                    else:
+                        # Re-raise with more context about the database error
+                        raise Exception(f"Database insert error: {error_msg}")
 
             inserted_ids = []
             records_saved = 0
@@ -1138,6 +1157,15 @@ async def save_to_database(message: dict):
                 except Exception as viz_error:
                     logger.error(f"[DB] Could not schedule visualization_data update for {connector_id}: {viz_error}", exc_info=True)
 
+            # Update pipeline counts immediately after saving (real-time count updates)
+            # Schedule in background to avoid blocking, but ensure it runs
+            try:
+                # Use create_task to run async without blocking
+                loop = asyncio.get_event_loop()
+                loop.create_task(update_pipeline_counts(connector_id))
+            except Exception as count_error:
+                logger.error(f"[DB] ❌ Could not schedule pipeline count update for {connector_id}: {count_error}", exc_info=True)
+
             # Return metadata (include all IDs so callers can log details/counts)
             return {
                 "ids": inserted_ids,
@@ -1156,10 +1184,18 @@ async def save_to_database(message: dict):
                 "response_time_ms": response_time_ms,
             }
     except Exception as e:
-        logger.error(f"Error saving to database: {e}")
+        error_type = type(e).__name__
+        error_message = str(e)
+        logger.error(f"Error saving to database: {e}", exc_info=True)
         import traceback
         traceback.print_exc()
-        return None
+        # Return error details instead of None
+        return {
+            "error": True,
+            "error_type": error_type,
+            "error_message": error_message,
+            "error_details": str(e)
+        }
 
 async def broadcast_to_websocket(message: dict):
     """Save to database first, then broadcast message to WebSocket clients with database info"""
@@ -3383,6 +3419,35 @@ async def get_pipeline_view(api_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/pipeline/{api_id}/failed-calls")
+async def get_failed_api_calls_for_pipeline(api_id: str, limit: int = 100):
+    """Get failed API calls for a specific pipeline/API."""
+    try:
+        failed_calls = await get_failed_api_calls(api_id=api_id, limit=limit)
+        return {
+            "api_id": api_id,
+            "failed_calls": failed_calls,
+            "count": len(failed_calls),
+        }
+    except Exception as e:
+        logger.error(f"[FAILED_API] Failed to fetch failed API calls for {api_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/pipeline/failed-calls/all")
+async def get_all_failed_api_calls(limit: int = 200):
+    """Get all failed API calls across all pipelines/APIs."""
+    try:
+        failed_calls = await get_failed_api_calls(api_id=None, limit=limit)
+        return {
+            "failed_calls": failed_calls,
+            "count": len(failed_calls),
+        }
+    except Exception as e:
+        logger.error(f"[FAILED_API] Failed to fetch all failed API calls: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/etl/active")
 async def list_active_etl_apis(lookback_minutes: int = 90):
     """
@@ -3602,10 +3667,57 @@ async def get_etl_pipeline_history(connector_id: str, history_limit: int = 15):
 
         pool = get_pool()
         async with pool.acquire() as conn:
+            # First, ensure counts are up-to-date by updating pipeline_steps
+            try:
+                await update_pipeline_counts(connector_id)
+            except Exception as update_err:
+                logger.warning(f"[PIPELINE] Could not update counts before fetching pipeline state: {update_err}")
+            
+            # Get counts from pipeline_steps (single source of truth) for consistency with summary cards
+            pipeline_step = await conn.fetchrow(
+                """
+                SELECT extract_count, transform_count, load_count, last_run_at
+                FROM pipeline_steps
+                WHERE pipeline_name = $1
+                """,
+                connector_id,
+            )
+            
+            # Fallback to direct calculation if pipeline_steps doesn't exist
+            if pipeline_step:
+                total_data = pipeline_step.get('extract_count', 0) or 0
+                total_items = pipeline_step.get('transform_count', 0) or 0
+            else:
+                # Calculate directly from tables as fallback
+                counts = await conn.fetchrow(
+                    """
+                    SELECT 
+                        COUNT(*) AS total_data,
+                        MAX(timestamp) AS last_data_at
+                    FROM api_connector_data
+                    WHERE connector_id = $1
+                    """,
+                    connector_id,
+                )
+                item_counts = await conn.fetchrow(
+                    """
+                    SELECT 
+                        COUNT(*) AS total_items,
+                        MAX(timestamp) AS last_item_at
+                    FROM api_connector_items
+                    WHERE connector_id = $1
+                    """,
+                    connector_id,
+                )
+                counts_dict = dict(counts) if counts else {}
+                item_counts_dict = dict(item_counts) if item_counts else {}
+                total_data = counts_dict.get("total_data", 0) or 0
+                total_items = item_counts_dict.get("total_items", 0) or 0
+            
+            # Get last timestamps for activity tracking
             counts = await conn.fetchrow(
                 """
                 SELECT 
-                    COUNT(*) AS total_data,
                     MAX(timestamp) AS last_data_at
                 FROM api_connector_data
                 WHERE connector_id = $1
@@ -3615,7 +3727,6 @@ async def get_etl_pipeline_history(connector_id: str, history_limit: int = 15):
             item_counts = await conn.fetchrow(
                 """
                 SELECT 
-                    COUNT(*) AS total_items,
                     MAX(timestamp) AS last_item_at
                 FROM api_connector_items
                 WHERE connector_id = $1
@@ -3659,9 +3770,9 @@ async def get_etl_pipeline_history(connector_id: str, history_limit: int = 15):
         item_counts_dict = dict(item_counts) if item_counts else {}
 
         data_stats = {
-            "total_records": counts_dict.get("total_data", 0),
+            "total_records": total_data,  # Use from pipeline_steps for consistency
             "last_data_at": counts_dict.get("last_data_at"),
-            "total_items": item_counts_dict.get("total_items", 0),
+            "total_items": total_items,  # Use from pipeline_steps for consistency
             "last_item_at": item_counts_dict.get("last_item_at"),
         }
 
