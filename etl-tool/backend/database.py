@@ -420,7 +420,57 @@ async def _initialize_tables():
                 ) THEN
                     ALTER TABLE api_connector_data ADD COLUMN session_id VARCHAR(100);
                 END IF;
+
+                -- Delta tracking columns
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'api_connector_data' AND column_name = 'primary_key'
+                ) THEN
+                    ALTER TABLE api_connector_data ADD COLUMN primary_key VARCHAR(255);
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'api_connector_data' AND column_name = 'delta_type'
+                ) THEN
+                    ALTER TABLE api_connector_data ADD COLUMN delta_type VARCHAR(20);
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'api_connector_data' AND column_name = 'pipeline_run_id'
+                ) THEN
+                    ALTER TABLE api_connector_data ADD COLUMN pipeline_run_id INTEGER;
+                END IF;
             END $$;
+        """)
+        
+        # Create unique constraint on primary_key for delta logic
+        # PostgreSQL requires explicit constraint for ON CONFLICT to work
+        # First, drop the index if it exists (in case we need to recreate it)
+        await conn.execute("""
+            DROP INDEX IF EXISTS idx_api_connector_data_unique_key
+        """)
+        
+        # Create unique index without WHERE clause (PostgreSQL ON CONFLICT needs this)
+        # We'll handle NULL primary_key values in application logic
+        await conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_api_connector_data_unique_key
+            ON api_connector_data(connector_id, primary_key)
+        """)
+        
+        # Create index for delta queries (primary_key lookup)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_api_connector_data_primary_key
+            ON api_connector_data(connector_id, primary_key)
+            WHERE primary_key IS NOT NULL
+        """)
+        
+        # Create index for delta_type queries
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_api_connector_data_delta_type
+            ON api_connector_data(connector_id, delta_type, timestamp DESC)
+            WHERE delta_type IS NOT NULL
         """)
         
         # Create indexes for api_connector_data

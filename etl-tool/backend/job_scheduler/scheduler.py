@@ -21,6 +21,13 @@ from database import (
 
 logger = logging.getLogger(__name__)
 
+# Import delta-integrated save function at module level
+try:
+    from services.delta_integrated_save import save_to_database_with_delta
+except ImportError as e:
+    logger.error(f"[JOB] Failed to import save_to_database_with_delta: {e}")
+    save_to_database_with_delta = None
+
 # List of non-realtime APIs to schedule
 # Each runs in parallel every SCHEDULE_INTERVAL_SECONDS
 SCHEDULED_APIS = [
@@ -289,12 +296,18 @@ class JobScheduler:
                 "timestamp": datetime.utcnow().isoformat() + "Z",
                 "status_code": response.status_code,
                 "response_time_ms": response_time_ms,
+                "pipeline_run_id": pipeline_run_id,  # Add pipeline_run_id for delta tracking
             }
             
             # Schedule async save on event loop
+            # For scheduled APIs, use delta-integrated save
             try:
+                # Check if delta-integrated save function is available
+                if save_to_database_with_delta is None:
+                    raise ImportError("save_to_database_with_delta function is not available")
+                
                 save_future = asyncio.run_coroutine_threadsafe(
-                    self.save_callback(message),
+                    save_to_database_with_delta(message),
                     self.event_loop,
                 )
                 save_result = save_future.result(timeout=20)
@@ -324,9 +337,11 @@ class JobScheduler:
                     
                     raise Exception(error_reason)
                 
-                records_saved = (
-                    save_result.get("records_saved", 0) if isinstance(save_result, dict) else 0
-                )
+                # Extract delta information from save result
+                records_saved = save_result.get("records_saved", 0) if isinstance(save_result, dict) else 0
+                new_count = save_result.get("new_count", 0) if isinstance(save_result, dict) else 0
+                updated_count = save_result.get("updated_count", 0) if isinstance(save_result, dict) else 0
+                unchanged_count = save_result.get("unchanged_count", 0) if isinstance(save_result, dict) else 0
                 
                 # Also save individual items if callback provided
                 if self.save_items_callback:
@@ -350,12 +365,20 @@ class JobScheduler:
                     "success",
                     {
                         "status_code": response.status_code,
-                        "records_saved": records_saved or record_count,
-                        "records": records_saved or record_count,
+                        "records_saved": records_saved,
+                        "new_count": new_count,
+                        "updated_count": updated_count,
+                        "unchanged_count": unchanged_count,
                     },
                 )
-                logger.info(f"[JOB] ✅ {api_name}: Saved to DB (status={response.status_code}, time={response_time_ms}ms)")
-                print(f"[JOB] ✅ {api_name}: Saved to DB (status={response.status_code}, time={response_time_ms}ms)")
+                logger.info(
+                    f"[JOB] ✅ {api_name}: Delta saved (NEW={new_count}, UPDATED={updated_count}, "
+                    f"UNCHANGED={unchanged_count}, TOTAL={records_saved}, time={response_time_ms}ms)"
+                )
+                print(
+                    f"[JOB] ✅ {api_name}: Delta saved (NEW={new_count}, UPDATED={updated_count}, "
+                    f"UNCHANGED={unchanged_count}, TOTAL={records_saved})"
+                )
             except asyncio.TimeoutError:
                 error_reason = "Database save timeout - operation exceeded 20 seconds"
                 logger.error(f"[JOB] ❌ Database save timeout for {api_name}")
@@ -381,9 +404,13 @@ class JobScheduler:
                 except Exception as log_err:
                     logger.debug(f"[FAILED_API] Failed to log failed API call: {log_err}")
             except Exception as e:
-                logger.error(f"[JOB] ❌ Failed to save to database: {e}")
-                print(f"[JOB] ❌ Failed to save to database: {e}")
-                _log_step("load", "failure", error_message=str(e))
+                error_str = str(e)
+                # Don't spam errors - log once per unique error per API
+                logger.error(f"[JOB] ❌ Failed to save to database for {api_name}: {error_str[:200]}")
+                # Only print if it's a new error type (not repeated schema/import errors)
+                if "schema" not in error_str.lower() and "import" not in error_str.lower():
+                    print(f"[JOB] ❌ Failed to save to database for {api_name}: {error_str[:200]}")
+                _log_step("load", "failure", error_message=error_str[:500])
                 run_status = "failure"
                 
                 # Extract main error reason from exception
@@ -542,6 +569,18 @@ class JobScheduler:
         Called every SCHEDULE_INTERVAL_SECONDS.
         """
         if not self.is_running:
+            return
+        
+        # Check if delta save function is available before running
+        if save_to_database_with_delta is None:
+            logger.error("[JOB SCHEDULER] ❌ Cannot run scheduled APIs: save_to_database_with_delta is not available. Please restart the server.")
+            print("[JOB SCHEDULER] ❌ Cannot run scheduled APIs: save_to_database_with_delta is not available. Please restart the server.")
+            # Still schedule next batch to retry after restart
+            if self.is_running:
+                self._schedule_handle = self.event_loop.call_later(
+                    SCHEDULE_INTERVAL_SECONDS,
+                    self._run_scheduled_batch
+                )
             return
         
         logger.info(f"[JOB SCHEDULER] ⚡ Running batch of {len(SCHEDULED_APIS)} APIs in parallel (every {SCHEDULE_INTERVAL_SECONDS}s)...")

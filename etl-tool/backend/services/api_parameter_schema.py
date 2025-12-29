@@ -106,7 +106,7 @@ API_PARAMETER_SCHEMAS: Dict[str, Dict[str, Any]] = {
     "coingecko_global": {
         "api_name": "CoinGecko - Global Market",
         "response_type": "dict",
-        "primary_identifier": "global_stats",  # Single record identifier
+        "primary_identifier": "global_stats",  # Single record identifier (constant)
         "timestamp_field": None,  # Use ingestion timestamp
         "required_fields": {
             "data": {
@@ -118,6 +118,7 @@ API_PARAMETER_SCHEMAS: Dict[str, Dict[str, Any]] = {
             }
         },
         "extract_rules": {
+            "global_stats": lambda data: "global_stats",  # Constant primary identifier for single-record API
             "total_market_cap_usd": lambda data: data.get("data", {}).get("total_market_cap", {}).get("usd", 0.0),
             "total_volume_usd": lambda data: data.get("data", {}).get("total_volume", {}).get("usd", 0.0),
             "active_cryptocurrencies": lambda data: data.get("data", {}).get("active_cryptocurrencies", 0),
@@ -126,6 +127,7 @@ API_PARAMETER_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "eth_dominance": lambda data: data.get("data", {}).get("market_cap_percentage", {}).get("eth", 0.0),
         },
         "business_fields": [
+            "global_stats",  # Add primary identifier to business fields
             "total_market_cap_usd",
             "total_volume_usd",
             "active_cryptocurrencies",
@@ -344,10 +346,12 @@ def validate_schema_consistency():
         
         # Validate primary_identifier exists in business_fields or extract_rules
         primary_id = schema.get("primary_identifier")
-        if primary_id and primary_id not in schema.get("business_fields", []):
-            # Check if it's in extract_rules
+        if primary_id:
+            business_fields = schema.get("business_fields", [])
             extract_rules = schema.get("extract_rules", {})
-            if primary_id not in extract_rules:
+            
+            # Check if it's in business_fields or extract_rules
+            if primary_id not in business_fields and primary_id not in extract_rules:
                 # Check if it's a nested field (e.g., "item.id")
                 if "." in primary_id:
                     # Nested field, assume it's extracted correctly
