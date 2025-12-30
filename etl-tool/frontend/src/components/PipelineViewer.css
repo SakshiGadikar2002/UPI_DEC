@@ -404,7 +404,7 @@
 }
 
 .scrollable-history {
-  max-height: 280px;
+  max-height: 400px;
   overflow-y: auto;
 }
 
@@ -413,7 +413,7 @@
 }
 
 .scrollable-activity {
-  max-height: 280px;
+  max-height: 400px;
   overflow-y: auto;
 }
 

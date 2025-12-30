@@ -1054,8 +1054,9 @@ async def update_pipeline_counts(connector_id: str):
         # Use a fresh connection to ensure we see all committed data
         async with pool.acquire() as conn:
             # Calculate current counts from database tables
+            # For consistency and to match the requirement, use item counts for all steps
             extract_count = await conn.fetchval("""
-                SELECT COUNT(*) FROM api_connector_data WHERE connector_id = $1
+                SELECT COUNT(*) FROM api_connector_items WHERE connector_id = $1
             """, connector_id) or 0
             
             transform_count = await conn.fetchval("""

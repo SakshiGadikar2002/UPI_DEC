@@ -231,13 +231,17 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
             
             // Priority 3: Fallback to data_stats for specific steps
             // CRITICAL: Use data_stats even if it's 0 - this is where real-time updates come from!
+            // For consistency with the requirement, always use total_items for extract, transform, and load steps
             if (recordCount === null || recordCount === undefined) {
-              if (stepName === 'extract' && ds.total_records !== undefined && ds.total_records !== null) {
-                recordCount = ds.total_records
-                source = 'data_stats.total_records'
+              if ((stepName === 'extract' || stepName === 'load') && ds.total_items !== undefined && ds.total_items !== null) {
+                recordCount = ds.total_items
+                source = 'data_stats.total_items'
               } else if (stepName === 'transform' && ds.total_items !== undefined && ds.total_items !== null) {
                 recordCount = ds.total_items
                 source = 'data_stats.total_items'
+              } else if (stepName === 'extract' && ds.total_records !== undefined && ds.total_records !== null) {
+                recordCount = ds.total_records
+                source = 'data_stats.total_records'
               } else if (stepName === 'load' && ds.total_records !== undefined && ds.total_records !== null) {
                 recordCount = ds.total_records
                 source = 'data_stats.total_records'
@@ -547,12 +551,15 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
         }
         
         // Fallback to data_stats for specific steps
+        // For consistency with the requirement, always use total_items for extract, transform, and load steps
         if (recordCount === null || recordCount === undefined) {
-          if (stepName === 'extract' && dataStats.total_records > 0) {
-            recordCount = dataStats.total_records
-          } else if (stepName === 'transform' && dataStats.total_items > 0) {
+          if ((stepName === 'extract' || stepName === 'load') && dataStats.total_items !== undefined && dataStats.total_items !== null && dataStats.total_items > 0) {
             recordCount = dataStats.total_items
-          } else if (stepName === 'load' && dataStats.total_records > 0) {
+          } else if (stepName === 'transform' && dataStats.total_items !== undefined && dataStats.total_items !== null && dataStats.total_items > 0) {
+            recordCount = dataStats.total_items
+          } else if (stepName === 'extract' && dataStats.total_records !== undefined && dataStats.total_records !== null && dataStats.total_records > 0) {
+            recordCount = dataStats.total_records
+          } else if (stepName === 'load' && dataStats.total_records !== undefined && dataStats.total_records !== null && dataStats.total_records > 0) {
             recordCount = dataStats.total_records
           }
         }
@@ -1187,11 +1194,14 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
                 
                 // Fallback to data_stats (same as canvas)
                 // CRITICAL: Use data_stats even if it's 0 - this is where real-time updates come from!
+                // For consistency with the requirement, always use total_items for extract, transform, and load steps
                 if (recordCount === null || recordCount === undefined) {
-                  if (stepName === 'extract' && dataStats.total_records !== undefined && dataStats.total_records !== null) {
-                    recordCount = dataStats.total_records
+                  if ((stepName === 'extract' || stepName === 'load') && dataStats.total_items !== undefined && dataStats.total_items !== null) {
+                    recordCount = dataStats.total_items
                   } else if (stepName === 'transform' && dataStats.total_items !== undefined && dataStats.total_items !== null) {
                     recordCount = dataStats.total_items
+                  } else if (stepName === 'extract' && dataStats.total_records !== undefined && dataStats.total_records !== null) {
+                    recordCount = dataStats.total_records
                   } else if (stepName === 'load' && dataStats.total_records !== undefined && dataStats.total_records !== null) {
                     recordCount = dataStats.total_records
                   }

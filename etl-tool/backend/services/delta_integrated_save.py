@@ -240,43 +240,52 @@ async def save_to_database_with_delta(message: dict) -> Dict[str, Any]:
                     )
                     continue
             
-            # Step 3: Update pipeline counts ONLY for delta records
-            # This ensures counts only increase, never reset
-            if saved_count > 0:
-                try:
-                    # Update pipeline_steps with delta counts
-                    # Increment extract_count by total_processed (all records from API)
-                    # Increment load_count by saved_count (only delta records saved)
-                    await conn.execute("""
-                        INSERT INTO pipeline_steps (
-                            pipeline_name, extract_count, transform_count, load_count, status, last_run_at
-                        )
-                        VALUES ($1, $2, $3, $4, 'COMPLETED', $5)
-                        ON CONFLICT (pipeline_name)
-                        DO UPDATE SET
-                            extract_count = pipeline_steps.extract_count + $2,
-                            transform_count = pipeline_steps.transform_count + $3,
-                            load_count = pipeline_steps.load_count + $4,
-                            status = 'COMPLETED',
-                            last_run_at = $5
-                    """,
-                        connector_id,
-                        len(records_to_save) + unchanged_count,  # Total records from API
-                        len(records_to_save),  # Transformed records (delta)
-                        saved_count,  # Loaded records (saved to DB)
-                        ingestion_timestamp
+            # Step 3: Update pipeline counts to reflect actual total in database
+            # This ensures counts are always accurate and never reset
+            # For consistency with requirements, use item counts for all steps
+            try:
+                # Calculate actual counts from database to ensure accuracy
+                # Use item counts for all steps (extract, transform, load) for consistency
+                extract_count = await conn.fetchval("""
+                    SELECT COUNT(*) FROM api_connector_items WHERE connector_id = $1
+                """, connector_id) or 0
+                
+                transform_count = await conn.fetchval("""
+                    SELECT COUNT(*) FROM api_connector_items WHERE connector_id = $1
+                """, connector_id) or 0
+                
+                load_count = transform_count  # Items are loaded to DB, so same as transform
+                
+                # Update pipeline_steps with actual counts from database
+                await conn.execute("""
+                    INSERT INTO pipeline_steps (
+                        pipeline_name, extract_count, transform_count, load_count, status, last_run_at
                     )
-                    
-                    logger.info(
-                        f"[DELTA] ✅ Updated pipeline counts for {connector_id}: "
-                        f"EXTRACT={len(records_to_save) + unchanged_count}, "
-                        f"TRANSFORM={len(records_to_save)}, LOAD={saved_count}"
-                    )
-                except Exception as count_error:
-                    logger.error(
-                        f"[DELTA] Failed to update pipeline counts for {connector_id}: {count_error}",
-                        exc_info=True
-                    )
+                    VALUES ($1, $2, $3, $4, 'COMPLETED', $5)
+                    ON CONFLICT (pipeline_name)
+                    DO UPDATE SET
+                        extract_count = $2,
+                        transform_count = $3,
+                        load_count = $4,
+                        status = 'COMPLETED',
+                        last_run_at = $5
+                """,
+                    connector_id,
+                    extract_count,
+                    transform_count,
+                    load_count,
+                    ingestion_timestamp
+                )
+                
+                logger.info(
+                    f"[DELTA] ✅ Updated pipeline counts for {connector_id}: "
+                    f"EXTRACT={extract_count}, TRANSFORM={transform_count}, LOAD={load_count}"
+                )
+            except Exception as count_error:
+                logger.error(
+                    f"[DELTA] Failed to update pipeline counts for {connector_id}: {count_error}",
+                    exc_info=True
+                )
         
         logger.info(
             f"[DELTA] ✅ {connector_id}: Saved {saved_count} delta records "
