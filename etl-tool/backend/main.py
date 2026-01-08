@@ -3361,6 +3361,9 @@ async def get_pipeline_view(api_id: str):
         completed_steps = len([s for s in display_steps if s.get("status") == "success"])
         progress_pct = int((completed_steps / total_steps) * 100)
 
+        # Get last_updated from pipeline_state (MAX(updated_at) from DB)
+        last_updated = pipeline_state.get("last_updated")
+        
         api_meta = {
             "api_id": display_run.get("api_id") if display_run else api_id,
             "api_name": display_run.get("api_name") if display_run else None,
@@ -3373,6 +3376,7 @@ async def get_pipeline_view(api_id: str):
                 "last_run": display_run.get("last_run_at") if display_run else None,
                 "next_run": display_run.get("next_run_at") if display_run else None,
             },
+            "last_updated": last_updated,  # MAX(updated_at) from api_connector_data
         }
 
         current_run = None
@@ -3620,6 +3624,9 @@ async def get_etl_pipeline_history(connector_id: str, history_limit: int = 15):
         else:
             progress_pct = 0
 
+        # Get last_updated from pipeline_state (MAX(updated_at) from DB)
+        last_updated = pipeline_state.get("last_updated")
+        
         api_meta = {
             "api_id": connector_id,
             "api_name": display_run.get("api_name") if display_run else None,
@@ -3632,6 +3639,7 @@ async def get_etl_pipeline_history(connector_id: str, history_limit: int = 15):
                 "last_run": display_run.get("last_run_at") if display_run else None,
                 "next_run": display_run.get("next_run_at") if display_run else None,
             },
+            "last_updated": last_updated,  # MAX(updated_at) from api_connector_data
         }
 
         current_run = None

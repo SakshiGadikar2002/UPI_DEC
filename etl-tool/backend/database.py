@@ -372,6 +372,7 @@ async def _initialize_tables():
                 id SERIAL PRIMARY KEY,
                 connector_id VARCHAR(100) NOT NULL,
                 timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
                 exchange VARCHAR(50),
                 instrument VARCHAR(100),
                 price DECIMAL(20, 8),
@@ -379,6 +380,21 @@ async def _initialize_tables():
                 message_type VARCHAR(50) DEFAULT 'api_response',
                 FOREIGN KEY (connector_id) REFERENCES api_connectors(connector_id) ON DELETE CASCADE
             )
+        """)
+
+        # Ensure updated_at column exists (for timestamp-based delta logic)
+        await conn.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'api_connector_data' AND column_name = 'updated_at'
+                ) THEN
+                    ALTER TABLE api_connector_data ADD COLUMN updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW();
+                    -- Set existing records' updated_at to their timestamp
+                    UPDATE api_connector_data SET updated_at = timestamp WHERE updated_at IS NULL;
+                END IF;
+            END $$;
         """)
 
         # Ensure new metric / tracing columns exist for api_connector_data
@@ -481,6 +497,10 @@ async def _initialize_tables():
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_api_connector_data_timestamp 
             ON api_connector_data(timestamp DESC)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_api_connector_data_updated_at 
+            ON api_connector_data(connector_id, updated_at DESC)
         """)
         # Removed indexes related to dropped columns
         
@@ -787,6 +807,23 @@ async def _initialize_tables():
             ON failed_api_calls(pipeline_run_id)
         """)
 
+        # Create delta_metadata table for timestamp-based delta logic
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS delta_metadata (
+                id SERIAL PRIMARY KEY,
+                connector_id VARCHAR(100) NOT NULL UNIQUE,
+                last_success_ts TIMESTAMP WITH TIME ZONE,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                FOREIGN KEY (connector_id) REFERENCES api_connectors(connector_id) ON DELETE CASCADE
+            )
+        """)
+
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_delta_metadata_connector_id
+            ON delta_metadata(connector_id)
+        """)
+
         print("[OK] Initialized PostgreSQL tables with indexes")
 
 
@@ -1086,6 +1123,7 @@ async def get_pipeline_state(api_id: str, history_limit: int = 10):
     """
     Return current pipeline run + history for the given API id.
     ADAPTED for new pipeline_steps schema (single source of truth).
+    Includes "Last Updated" timestamp from MAX(updated_at) in api_connector_data.
     """
     if pool is None:
         raise RuntimeError("Database pool not initialized")
@@ -1101,6 +1139,12 @@ async def get_pipeline_state(api_id: str, history_limit: int = 10):
         return row_dict
 
     async with pool.acquire() as conn:
+        # Fetch MAX(updated_at) from api_connector_data as "Last Updated"
+        last_updated = await conn.fetchval("""
+            SELECT MAX(updated_at)
+            FROM api_connector_data
+            WHERE connector_id = $1
+        """, api_id)
         # 1. Fetch from new pipeline_steps table (Single Source of Truth)
         step_row = await conn.fetchrow(
             "SELECT * FROM pipeline_steps WHERE pipeline_name = $1", 
@@ -1194,7 +1238,8 @@ async def get_pipeline_state(api_id: str, history_limit: int = 10):
             "active_run": active_run,
             "steps": active_run['steps'] if active_run and 'steps' in active_run else [],
             "latest_steps": active_run['steps'] if active_run and 'steps' in active_run else [],
-            "history": history
+            "history": history,
+            "last_updated": last_updated.isoformat() if last_updated else None  # MAX(updated_at) from DB
         }
 
 
@@ -1374,3 +1419,72 @@ async def update_file_status(file_id: str, status: str):
             status,
             file_id,
         )
+
+
+# -------- Delta Metadata Helpers --------
+async def get_last_success_ts(connector_id: str) -> Optional[datetime]:
+    """
+    Get the last successful timestamp for a connector.
+    
+    Args:
+        connector_id: API connector identifier
+    
+    Returns:
+        Last success timestamp or None if not set
+    """
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+    
+    async with pool.acquire() as conn:
+        result = await conn.fetchval(
+            "SELECT last_success_ts FROM delta_metadata WHERE connector_id = $1",
+            connector_id
+        )
+        return result
+
+
+async def update_last_success_ts(connector_id: str, success_ts: datetime):
+    """
+    Update the last successful timestamp for a connector.
+    Only updates if the new timestamp is greater than the existing one.
+    
+    Args:
+        connector_id: API connector identifier
+        success_ts: Timestamp to set (should be MAX(updated_at) from saved records)
+    """
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+    
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO delta_metadata (connector_id, last_success_ts, updated_at)
+            VALUES ($1, $2, NOW())
+            ON CONFLICT (connector_id)
+            DO UPDATE SET
+                last_success_ts = GREATEST(delta_metadata.last_success_ts, EXCLUDED.last_success_ts),
+                updated_at = NOW()
+            WHERE EXCLUDED.last_success_ts > COALESCE(delta_metadata.last_success_ts, '1970-01-01'::timestamp)
+        """, connector_id, success_ts)
+
+
+async def get_max_updated_at(connector_id: str) -> Optional[datetime]:
+    """
+    Get the maximum updated_at timestamp from api_connector_data for a connector.
+    This is used to expose "Last Updated" to the UI.
+    
+    Args:
+        connector_id: API connector identifier
+    
+    Returns:
+        Maximum updated_at timestamp or None if no records exist
+    """
+    if pool is None:
+        raise RuntimeError("Database pool not initialized")
+    
+    async with pool.acquire() as conn:
+        result = await conn.fetchval("""
+            SELECT MAX(updated_at) 
+            FROM api_connector_data 
+            WHERE connector_id = $1
+        """, connector_id)
+        return result

@@ -18,7 +18,7 @@ from services.api_parameter_schema import (
     get_delta_comparison_fields,
 )
 from services.api_data_transformer import transform_api_response, APIDataTransformer
-from database import get_pool
+from database import get_pool, get_last_success_ts
 
 logger = logging.getLogger(__name__)
 
@@ -113,13 +113,16 @@ class DeltaProcessor:
     
     async def fetch_existing_records(
         self,
-        primary_keys: List[str]
+        primary_keys: List[str],
+        last_success_ts: Optional[datetime] = None
     ) -> Dict[str, Dict[str, Any]]:
         """
         Fetch existing records from database by primary keys.
+        Only fetches records where updated_at > last_success_ts (timestamp-based delta logic).
         
         Args:
             primary_keys: List of primary keys to fetch
+            last_success_ts: Only fetch records updated after this timestamp (None = fetch all)
         
         Returns:
             Dict mapping primary_key -> record data
@@ -134,20 +137,37 @@ class DeltaProcessor:
             # Query api_connector_data table
             # Primary key is stored in primary_key column
             # Use ANY with array parameter for efficient lookup
+            # Filter by updated_at > last_success_ts for timestamp-based delta logic
             if not primary_keys:
                 return {}
             
-            rows = await conn.fetch("""
-                SELECT 
-                    id,
-                    data,
-                    timestamp as updated_at,
-                    primary_key,
-                    (data->>'checksum')::text as checksum
-                FROM api_connector_data
-                WHERE connector_id = $1
-                  AND primary_key = ANY($2::text[])
-            """, self.connector_id, primary_keys)
+            if last_success_ts:
+                # Only fetch records updated after last_success_ts
+                rows = await conn.fetch("""
+                    SELECT 
+                        id,
+                        data,
+                        updated_at,
+                        primary_key,
+                        (data->>'checksum')::text as checksum
+                    FROM api_connector_data
+                    WHERE connector_id = $1
+                      AND primary_key = ANY($2::text[])
+                      AND updated_at > $3
+                """, self.connector_id, primary_keys, last_success_ts)
+            else:
+                # Fetch all records (first run or no last_success_ts set)
+                rows = await conn.fetch("""
+                    SELECT 
+                        id,
+                        data,
+                        updated_at,
+                        primary_key,
+                        (data->>'checksum')::text as checksum
+                    FROM api_connector_data
+                    WHERE connector_id = $1
+                      AND primary_key = ANY($2::text[])
+                """, self.connector_id, primary_keys)
             
             for row in rows:
                 primary_key = row.get('primary_key')
@@ -205,15 +225,17 @@ class DeltaProcessor:
         self,
         transformed_data: List[Dict[str, Any]],
         ingestion_timestamp: datetime,
-        pipeline_run_id: Optional[int] = None
+        pipeline_run_id: Optional[int] = None,
+        last_success_ts: Optional[datetime] = None
     ) -> Dict[str, Any]:
         """
-        Process a batch of transformed records using delta logic.
+        Process a batch of transformed records using delta logic with timestamp-based filtering.
         
         Args:
             transformed_data: List of transformed records
             ingestion_timestamp: Timestamp when data was ingested
             pipeline_run_id: Optional pipeline run ID for tracking
+            last_success_ts: Only compare with records updated after this timestamp (None = compare with all)
         
         Returns:
             Dict with processing results:
@@ -253,8 +275,8 @@ class DeltaProcessor:
             })
             primary_keys_to_fetch.append(primary_key)
         
-        # Step 2: Fetch existing records from database
-        existing_records = await self.fetch_existing_records(primary_keys_to_fetch)
+        # Step 2: Fetch existing records from database (filtered by updated_at > last_success_ts)
+        existing_records = await self.fetch_existing_records(primary_keys_to_fetch, last_success_ts)
         
         # Step 3: Compare and classify records
         new_records = []
@@ -307,10 +329,11 @@ async def process_api_data_with_delta(
     connector_id: str,
     raw_api_response: Any,
     ingestion_timestamp: datetime,
-    pipeline_run_id: Optional[int] = None
+    pipeline_run_id: Optional[int] = None,
+    last_success_ts: Optional[datetime] = None
 ) -> Dict[str, Any]:
     """
-    Main entry point for delta processing.
+    Main entry point for delta processing with timestamp-based filtering.
     Transforms API response and processes delta.
     
     Args:
@@ -318,6 +341,7 @@ async def process_api_data_with_delta(
         raw_api_response: Raw API response
         ingestion_timestamp: Timestamp when data was ingested
         pipeline_run_id: Optional pipeline run ID
+        last_success_ts: Only compare with records updated after this timestamp (None = compare with all)
     
     Returns:
         Dict with processing results and records to save
@@ -336,12 +360,13 @@ async def process_api_data_with_delta(
             "records": []
         }
     
-    # Step 2: Process delta
+    # Step 2: Process delta with timestamp-based filtering
     processor = DeltaProcessor(connector_id)
     delta_result = await processor.process_delta_batch(
         transformed_records,
         ingestion_timestamp,
-        pipeline_run_id
+        pipeline_run_id,
+        last_success_ts
     )
     
     return delta_result

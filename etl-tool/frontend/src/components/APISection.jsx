@@ -5,6 +5,7 @@ import { removeDuplicates } from '../utils/duplicateRemover'
 import { getRealtimeWebSocket } from '../utils/realtimeWebSocket'
 import PipelineViewer from './PipelineViewer'
 import FailedApiCallsViewer from './FailedApiCallsViewer'
+import FailedApisTicker from './FailedApisTicker'
 
 function APISection({ data, setData, onViewPipeline = null }) {
   const apiBase = import.meta.env.VITE_API_BASE || ''
@@ -1042,6 +1043,7 @@ function APISection({ data, setData, onViewPipeline = null }) {
               </button>
             </div>
           </div>
+          <FailedApisTicker />
           {scheduledApisExpanded && (
             <div className="api-scheduled-content">
               {activeError && <div className="api-error-banner">{activeError}</div>}

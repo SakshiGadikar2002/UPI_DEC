@@ -69,7 +69,8 @@ class MessageProcessor:
         instrument = self._extract_instrument(data, exchange)
         price = self._extract_price(data, exchange)
         
-        return {
+        # Build normalized message with all required fields
+        normalized = {
             "exchange": exchange,
             "instrument": instrument,
             "price": price,
@@ -78,6 +79,17 @@ class MessageProcessor:
             "timestamp": timestamp,
             "connector_id": connector_id
         }
+        
+        # Preserve API observability fields for API Gateway dashboard
+        # These are critical for tracking status codes, latency, and errors
+        if "status_code" in message:
+            normalized["status_code"] = message["status_code"]
+        if "response_time_ms" in message:
+            normalized["response_time_ms"] = message["response_time_ms"]
+        if "raw_response" in message:
+            normalized["raw_response"] = message["raw_response"]
+        
+        return normalized
     
     def _extract_instrument(self, data: Any, exchange: str) -> Optional[str]:
         """Extract instrument/symbol from data"""

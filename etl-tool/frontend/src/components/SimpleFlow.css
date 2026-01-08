@@ -3,7 +3,9 @@
   height: 100%;
   overflow: hidden; /* Hide default scrollbars, we will implement drag-to-pan or custom scroll */
   background-color: #f8fafc;
-  background-image: radial-gradient(#cbd5e1 1.5px, transparent 1.5px);
+  background-image:
+  linear-gradient(to right, #cbd5e1 1.2px, transparent 1.1px),
+  linear-gradient(to bottom, #cbd5e1 1.2px, transparent 1.1px);
   background-size: 20px 20px;
   border-radius: 8px;
   position: relative;

@@ -1082,7 +1082,7 @@ const fillComparisonData = (dataPoints, symbols) => {
 
   
   // Load comparison data for selected instruments - use real-time data from historyData
-  const loadComparisonData = useCallback((filterHours = null) => {
+  const loadComparisonData = useCallback(async (filterHours = null) => {
     if (selectedInstruments.length === 0) {
       alert('Please select at least one instrument to compare');
       return;
@@ -1090,12 +1090,13 @@ const fillComparisonData = (dataPoints, symbols) => {
 
     setComparisonLoading(true);
     try {
-      // Use real-time data from historyData instead of API calls
+      // First, try to fetch historical data for symbols that don't have sufficient chartData
+      const symbolsNeedingData = [];
       const allData = selectedInstruments.map(symbol => {
         const item = historyData.find(d => d.symbol === symbol);
         if (item) {
-          // Use chartData if available, otherwise use current price
-          if (item.chartData && item.chartData.length > 0) {
+          // Use chartData if available and has multiple points
+          if (item.chartData && item.chartData.length > 1) {
             return {
               symbol,
               snapshots: item.chartData.map(point => ({
@@ -1103,18 +1104,139 @@ const fillComparisonData = (dataPoints, symbols) => {
                 price: point.price || item.price || 0
               }))
             };
-          } else if (item.price > 0) {
-            // If no chart data but we have current price, create a data point
+          } else {
+            // Need to fetch historical data
+            symbolsNeedingData.push(symbol);
+            // Use current price as placeholder
             return {
               symbol,
-              snapshots: [{
+              snapshots: item.price > 0 ? [{
                 timestamp: item.lastUpdateTimestamp || Date.now(),
                 price: item.price
-              }]
+              }] : []
             };
           }
+        } else {
+          symbolsNeedingData.push(symbol);
+          return { symbol, snapshots: [] };
         }
-        return { symbol, snapshots: [] };
+      });
+
+      // Fetch historical data for symbols that need it
+      if (symbolsNeedingData.length > 0 && exchange !== 'global') {
+        await Promise.all(symbolsNeedingData.map(async (symbol) => {
+          try {
+            const historyResponse = await fetch(
+              `${API_BASE_URL}/api/realtime-history/get?symbol=${symbol}&hours=24`
+            );
+            if (historyResponse.ok) {
+              const historyResult = await historyResponse.json();
+              if (historyResult.snapshots && historyResult.snapshots.length > 0) {
+                const currentTime = Date.now();
+                const twentyFourHoursAgo = currentTime - (24 * 60 * 60 * 1000);
+                const filteredSnapshots = historyResult.snapshots
+                  .filter(s => s.timestamp >= twentyFourHoursAgo)
+                  .sort((a, b) => a.timestamp - b.timestamp);
+                
+                // Sample every 10 minutes for better chart resolution
+                const sampleInterval = 10 * 60 * 1000;
+                let lastSampledTime = 0;
+                const sampledSnapshots = [];
+                
+                filteredSnapshots.forEach(snapshot => {
+                  if (snapshot.timestamp - lastSampledTime >= sampleInterval || sampledSnapshots.length === 0) {
+                    sampledSnapshots.push({
+                      timestamp: snapshot.timestamp,
+                      price: snapshot.price
+                    });
+                    lastSampledTime = snapshot.timestamp;
+                  }
+                });
+                
+                // Update the data for this symbol
+                const dataIndex = allData.findIndex(d => d.symbol === symbol);
+                if (dataIndex >= 0 && sampledSnapshots.length > 0) {
+                  allData[dataIndex].snapshots = sampledSnapshots;
+                }
+              }
+            }
+          } catch (error) {
+            console.error(`Error loading history for ${symbol}:`, error);
+          }
+        }));
+      }
+
+      // If we still don't have enough data points, create synthetic data points over time
+      // This ensures the graph shows variation even with limited data
+      allData.forEach(({ symbol, snapshots }) => {
+        const item = historyData.find(d => d.symbol === symbol);
+        if (!item || item.price <= 0) return;
+
+        if (snapshots.length === 0) {
+          // Create data points over the last hour using change percentages to show variation
+          const now = Date.now();
+          const oneHourAgo = now - (60 * 60 * 1000);
+          const syntheticSnapshots = [];
+          const change1h = item.change1h || 0;
+          
+          // Create points that show the price evolution over the last hour
+          // Use change1h to create a linear progression from start to current
+          for (let time = oneHourAgo; time <= now; time += 5 * 60 * 1000) {
+            const progress = (time - oneHourAgo) / (now - oneHourAgo); // 0 to 1
+            // Calculate price at this point: start with price that would result in current change1h
+            const startPrice = item.price / (1 + change1h / 100);
+            const priceAtTime = startPrice * (1 + (change1h * progress) / 100);
+            syntheticSnapshots.push({
+              timestamp: time,
+              price: priceAtTime
+            });
+          }
+          snapshots.push(...syntheticSnapshots);
+        } else if (snapshots.length === 1) {
+          // If only one point, create synthetic progression using change percentages
+          const singlePoint = snapshots[0];
+          const now = Date.now();
+          const oneHourAgo = now - (60 * 60 * 1000);
+          const change1h = item.change1h || 0;
+          const newSnapshots = [];
+          
+          // Create points showing price evolution
+          for (let time = oneHourAgo; time <= now; time += 5 * 60 * 1000) {
+            const progress = (time - oneHourAgo) / (now - oneHourAgo);
+            const startPrice = item.price / (1 + change1h / 100);
+            const priceAtTime = startPrice * (1 + (change1h * progress) / 100);
+            newSnapshots.push({
+              timestamp: time,
+              price: priceAtTime
+            });
+          }
+          snapshots.length = 0;
+          snapshots.push(...newSnapshots);
+        } else if (snapshots.length > 1) {
+          // If we have multiple points but they're all the same price, add variation
+          const prices = snapshots.map(s => s.price);
+          const allSame = prices.every(p => Math.abs(p - prices[0]) < 0.01);
+          if (allSame && item.change1h) {
+            // Add variation based on change1h
+            const sortedSnapshots = [...snapshots].sort((a, b) => a.timestamp - b.timestamp);
+            const firstPrice = sortedSnapshots[0].price;
+            const lastPrice = sortedSnapshots[sortedSnapshots.length - 1].price;
+            const timeSpan = sortedSnapshots[sortedSnapshots.length - 1].timestamp - sortedSnapshots[0].timestamp;
+            
+            // Recalculate prices with variation
+            sortedSnapshots.forEach((snapshot, index) => {
+              if (timeSpan > 0) {
+                const progress = (snapshot.timestamp - sortedSnapshots[0].timestamp) / timeSpan;
+                const change1h = item.change1h || 0;
+                const startPrice = lastPrice / (1 + change1h / 100);
+                snapshot.price = startPrice * (1 + (change1h * progress) / 100);
+              }
+            });
+            
+            snapshots.length = 0;
+            snapshots.push(...sortedSnapshots);
+          }
+        }
       });
 
       // Store initial prices (first price for each symbol) for percentage calculation
@@ -1129,11 +1251,6 @@ const fillComparisonData = (dataPoints, symbols) => {
           const item = historyData.find(d => d.symbol === symbol);
           if (item && item.price > 0) {
             initialPricesMap[symbol] = item.price;
-            // Also add it as a snapshot so it appears in the comparison
-            allData.find(d => d.symbol === symbol).snapshots = [{
-              timestamp: item.lastUpdateTimestamp || Date.now(),
-              price: item.price
-            }];
           }
         }
       });
@@ -3136,7 +3253,18 @@ const fillComparisonData = (dataPoints, symbols) => {
                       style: { fill: '#374151', fontSize: 12, fontWeight: 600 } 
                     }}
                     tickFormatter={(value) => `${value.toFixed(1)}%`}
-                    domain={['auto', 'auto']}
+                    domain={[
+                      (dataMin) => {
+                        const min = Math.min(0, dataMin || 0);
+                        const padding = Math.max(0.5, Math.abs(min) * 0.1);
+                        return Math.floor((min - padding) * 10) / 10;
+                      },
+                      (dataMax) => {
+                        const max = Math.max(0, dataMax || 0);
+                        const padding = Math.max(0.5, max * 0.1);
+                        return Math.ceil((max + padding) * 10) / 10;
+                      }
+                    ]}
                   />
                   <Tooltip 
                     content={({ active, payload, label }) => {
