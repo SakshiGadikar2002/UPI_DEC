@@ -4,7 +4,9 @@ import { checkBackendHealth } from '../utils/backendCheck'
 import { removeDuplicates } from '../utils/duplicateRemover'
 import { getRealtimeWebSocket } from '../utils/realtimeWebSocket'
 import PipelineViewer from './PipelineViewer'
+import PipelineBuilder from './PipelineBuilder'
 import FailedApiCallsViewer from './FailedApiCallsViewer'
+import FailedApisTicker from './FailedApisTicker'
 
 function APISection({ data, setData, onViewPipeline = null }) {
   const apiBase = import.meta.env.VITE_API_BASE || ''
@@ -42,6 +44,7 @@ function APISection({ data, setData, onViewPipeline = null }) {
   const [selectedActiveApi, setSelectedActiveApi] = useState(null)
   const [showPipelineView, setShowPipelineView] = useState(false)
   const [showFailedApisView, setShowFailedApisView] = useState(false)
+  const [showPipelineBuilder, setShowPipelineBuilder] = useState(false)
   const [formExpanded, setFormExpanded] = useState(false)
   const [scheduledApisExpanded, setScheduledApisExpanded] = useState(false)
   const wsRef = useRef(null)
@@ -1028,6 +1031,19 @@ function APISection({ data, setData, onViewPipeline = null }) {
                 </svg>
                 Failed APIs
               </button>
+              <button
+                className="api-action-btn api-pipeline-builder-btn"
+                onClick={() => {
+                  setShowPipelineBuilder(true)
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="2" y="2" width="10" height="10" rx="1"/>
+                  <line x1="2" y1="6" x2="12" y2="6"/>
+                  <line x1="6" y1="2" x2="6" y2="12"/>
+                </svg>
+                Pipeline Builder
+              </button>
               <button 
                 className="api-collapse-btn"
                 onClick={() => setScheduledApisExpanded(!scheduledApisExpanded)}
@@ -1042,6 +1058,7 @@ function APISection({ data, setData, onViewPipeline = null }) {
               </button>
             </div>
           </div>
+          <FailedApisTicker />
           {scheduledApisExpanded && (
             <div className="api-scheduled-content">
               {activeError && <div className="api-error-banner">{activeError}</div>}
@@ -1160,6 +1177,11 @@ function APISection({ data, setData, onViewPipeline = null }) {
               </div>
             </div>
           </div>
+        )}
+
+        {/* Pipeline Builder Full Page */}
+        {showPipelineBuilder && (
+          <PipelineBuilder onClose={() => setShowPipelineBuilder(false)} />
         )}
 
         {/* Quick Connect Section - Between Scheduled APIs and Configuration */}

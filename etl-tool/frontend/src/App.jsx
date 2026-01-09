@@ -10,6 +10,7 @@ import DataDisplay from './components/DataDisplay'
 import ErrorBoundary from './components/ErrorBoundary'
 import AuthForm from './components/AuthForm'
 import PipelineViewer from './components/PipelineViewer'
+import PipelineBuilder from './components/PipelineBuilder'
 import { saveCredentials, clearCredentials, getSavedCredentials, isRememberMeEnabled, saveEmail } from './utils/credentialStorage'
 import './App.css'
 
@@ -46,6 +47,7 @@ function App() {
   const [authLoading, setAuthLoading] = useState(false)
   const [authError, setAuthError] = useState('')
   const [pipelineViewApiId, setPipelineViewApiId] = useState(null)
+  const [showPipelineBuilder, setShowPipelineBuilder] = useState(false)
   // Default to backend on 8000; can be overridden via VITE_API_BASE
   const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
 
@@ -329,6 +331,12 @@ function App() {
     // eslint-disable-next-line
   }, [user, token])
 
+  // Handle section change
+  const handleSectionChange = (section) => {
+    setActiveSection(section)
+    setShowPipelineBuilder(false)
+  }
+
   // Route to the active section component
   const renderActiveSection = () => {
     switch (activeSection) {
@@ -397,14 +405,33 @@ function App() {
                 />
                 <Sidebar 
                   activeSection={activeSection} 
-                  setActiveSection={setActiveSection}
+                  setActiveSection={handleSectionChange}
                   isOpen={sidebarOpen}
                   setIsOpen={setSidebarOpen}
                 />
               </>
             )}
             
-            {pipelineViewApiId ? (
+            {showPipelineBuilder ? (
+              // Full page pipeline builder - show header and sidebar
+              <>
+                <Header 
+                  sidebarOpen={sidebarOpen} 
+                  setIsOpen={setSidebarOpen}
+                  history={history}
+                  onClearHistory={clearHistory}
+                  user={user}
+                  onLogout={handleLogout}
+                />
+                <Sidebar 
+                  activeSection={activeSection} 
+                  setActiveSection={handleSectionChange}
+                  isOpen={sidebarOpen}
+                  setIsOpen={setSidebarOpen}
+                />
+                <PipelineBuilder onClose={() => setShowPipelineBuilder(false)} />
+              </>
+            ) : pipelineViewApiId ? (
               // Full page pipeline view
               <div className="pipeline-full-page">
                 <div className="pipeline-full-page-header">

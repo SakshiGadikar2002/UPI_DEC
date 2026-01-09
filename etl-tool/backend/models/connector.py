@@ -1,6 +1,10 @@
 """
-Pydantic models for API connector management
+Pydantic models for API connector management-
+Defines how API connectors should look, Validates user input before it reaches business logic
+Enforces correct authentication configuration, Standardizes request, update, and response structures
+Protects sensitive data from being exposed, Acts as a contract between UI → Backend → Database → Pipeline
 """
+
 from pydantic import BaseModel, Field, validator, root_validator
 from typing import Optional, Dict, Any
 from datetime import datetime

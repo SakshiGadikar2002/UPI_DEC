@@ -3361,6 +3361,9 @@ async def get_pipeline_view(api_id: str):
         completed_steps = len([s for s in display_steps if s.get("status") == "success"])
         progress_pct = int((completed_steps / total_steps) * 100)
 
+        # Get last_updated from pipeline_state (MAX(updated_at) from DB)
+        last_updated = pipeline_state.get("last_updated")
+        
         api_meta = {
             "api_id": display_run.get("api_id") if display_run else api_id,
             "api_name": display_run.get("api_name") if display_run else None,
@@ -3373,6 +3376,7 @@ async def get_pipeline_view(api_id: str):
                 "last_run": display_run.get("last_run_at") if display_run else None,
                 "next_run": display_run.get("next_run_at") if display_run else None,
             },
+            "last_updated": last_updated,  # MAX(updated_at) from api_connector_data
         }
 
         current_run = None
@@ -3620,6 +3624,9 @@ async def get_etl_pipeline_history(connector_id: str, history_limit: int = 15):
         else:
             progress_pct = 0
 
+        # Get last_updated from pipeline_state (MAX(updated_at) from DB)
+        last_updated = pipeline_state.get("last_updated")
+        
         api_meta = {
             "api_id": connector_id,
             "api_name": display_run.get("api_name") if display_run else None,
@@ -3632,6 +3639,7 @@ async def get_etl_pipeline_history(connector_id: str, history_limit: int = 15):
                 "last_run": display_run.get("last_run_at") if display_run else None,
                 "next_run": display_run.get("next_run_at") if display_run else None,
             },
+            "last_updated": last_updated,  # MAX(updated_at) from api_connector_data
         }
 
         current_run = None
@@ -4653,6 +4661,272 @@ async def get_api_gateway_connectors():
             ]
     except Exception as e:
         logger.error(f"[API GATEWAY] Failed to get connectors: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ========== Custom Pipeline Builder Models ==========
+
+class PipelineNode(BaseModel):
+    id: str
+    type: str  # 'source', 'field_selector', 'filter', 'transform', 'destination'
+    position: Dict[str, float]
+    config: Dict[str, Any]
+
+class PipelineEdge(BaseModel):
+    id: str
+    source: str
+    target: str
+
+class CustomPipelineCreate(BaseModel):
+    pipeline_id: str
+    name: str
+    description: Optional[str] = None
+    nodes: List[PipelineNode]
+    edges: List[PipelineEdge]
+
+class CustomPipelineUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    nodes: Optional[List[PipelineNode]] = None
+    edges: Optional[List[PipelineEdge]] = None
+
+# ========== Custom Pipeline Builder Endpoints ==========
+
+@app.post("/api/custom-pipelines")
+async def create_custom_pipeline(pipeline: CustomPipelineCreate):
+    """Create a new custom pipeline"""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            definition = {
+                "nodes": [node.dict() for node in pipeline.nodes],
+                "edges": [edge.dict() for edge in pipeline.edges]
+            }
+            
+            await conn.execute("""
+                INSERT INTO custom_pipelines (pipeline_id, name, description, definition)
+                VALUES ($1, $2, $3, $4)
+            """, pipeline.pipeline_id, pipeline.name, pipeline.description, json.dumps(definition))
+            
+            return {"success": True, "pipeline_id": pipeline.pipeline_id}
+    except Exception as e:
+        logger.error(f"Error creating custom pipeline: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/custom-pipelines")
+async def list_custom_pipelines():
+    """List all custom pipelines"""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT pipeline_id, name, description, created_at, updated_at, 
+                       status, last_run_at, run_count
+                FROM custom_pipelines
+                ORDER BY created_at DESC
+            """)
+            
+            return [dict(row) for row in rows]
+    except Exception as e:
+        logger.error(f"Error listing custom pipelines: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/custom-pipelines/{pipeline_id}")
+async def get_custom_pipeline(pipeline_id: str):
+    """Get a specific custom pipeline"""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT pipeline_id, name, description, definition, 
+                       created_at, updated_at, status, last_run_at, run_count
+                FROM custom_pipelines
+                WHERE pipeline_id = $1
+            """, pipeline_id)
+            
+            if not row:
+                raise HTTPException(status_code=404, detail="Pipeline not found")
+            
+            result = dict(row)
+            result["definition"] = row["definition"] if isinstance(row["definition"], dict) else json.loads(row["definition"])
+            return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting custom pipeline: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/custom-pipelines/{pipeline_id}")
+async def update_custom_pipeline(pipeline_id: str, pipeline: CustomPipelineUpdate):
+    """Update a custom pipeline"""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            updates = []
+            params = []
+            param_count = 1
+            
+            if pipeline.name:
+                updates.append(f"name = ${param_count}")
+                params.append(pipeline.name)
+                param_count += 1
+            
+            if pipeline.description is not None:
+                updates.append(f"description = ${param_count}")
+                params.append(pipeline.description)
+                param_count += 1
+            
+            if pipeline.nodes is not None and pipeline.edges is not None:
+                definition = {
+                    "nodes": [node.dict() for node in pipeline.nodes],
+                    "edges": [edge.dict() for edge in pipeline.edges]
+                }
+                updates.append(f"definition = ${param_count}")
+                params.append(json.dumps(definition))
+                param_count += 1
+            
+            updates.append(f"updated_at = NOW()")
+            params.append(pipeline_id)
+            
+            query = f"""
+                UPDATE custom_pipelines
+                SET {', '.join(updates)}
+                WHERE pipeline_id = ${param_count}
+            """
+            
+            await conn.execute(query, *params)
+            return {"success": True}
+    except Exception as e:
+        logger.error(f"Error updating custom pipeline: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/custom-pipelines/{pipeline_id}")
+async def delete_custom_pipeline(pipeline_id: str):
+    """Delete a custom pipeline"""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                DELETE FROM custom_pipelines WHERE pipeline_id = $1
+            """, pipeline_id)
+            return {"success": True}
+    except Exception as e:
+        logger.error(f"Error deleting custom pipeline: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/custom-pipelines/{pipeline_id}/run")
+async def run_custom_pipeline(pipeline_id: str):
+    """Execute a custom pipeline"""
+    pool = get_pool()
+    try:
+        # Get pipeline definition
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT definition FROM custom_pipelines WHERE pipeline_id = $1
+            """, pipeline_id)
+            
+            if not row:
+                raise HTTPException(status_code=404, detail="Pipeline not found")
+            
+            definition = row["definition"] if isinstance(row["definition"], dict) else json.loads(row["definition"])
+            
+            # Execute pipeline
+            from services.custom_pipeline_executor import execute_custom_pipeline
+            result = await execute_custom_pipeline(pipeline_id, definition)
+            
+            # Update last_run_at and run_count
+            await conn.execute("""
+                UPDATE custom_pipelines
+                SET last_run_at = NOW(), run_count = run_count + 1
+                WHERE pipeline_id = $1
+            """, pipeline_id)
+            
+            return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error running custom pipeline: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/connectors/{connector_id}/fields")
+async def get_connector_fields(connector_id: str):
+    """Get available fields from a connector's recent data"""
+    pool = get_pool()
+    try:
+        async with pool.acquire() as conn:
+            # Get a sample record from the connector
+            # Try both data column and processed_data if available
+            row = await conn.fetchrow("""
+                SELECT data, raw_response 
+                FROM api_connector_data
+                WHERE connector_id = $1
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """, connector_id)
+            
+            if not row:
+                logger.warning(f"No data found for connector {connector_id}")
+                return {"fields": [], "message": f"No data available for connector '{connector_id}'. Please run the connector at least once to populate data."}
+            
+            # Try to get data from 'data' column first, then raw_response
+            data = None
+            data_raw = row.get("data")
+            raw_response = row.get("raw_response")
+            
+            # Parse data column
+            if data_raw:
+                try:
+                    if isinstance(data_raw, dict):
+                        data = data_raw
+                    elif isinstance(data_raw, str):
+                        data = json.loads(data_raw)
+                    else:
+                        data = data_raw
+                except json.JSONDecodeError:
+                    logger.warning(f"Could not parse 'data' column as JSON for connector {connector_id}")
+            
+            # If data column didn't work, try raw_response
+            if not data and raw_response:
+                try:
+                    if isinstance(raw_response, dict):
+                        data = raw_response
+                    elif isinstance(raw_response, str):
+                        data = json.loads(raw_response)
+                    else:
+                        data = raw_response
+                except json.JSONDecodeError:
+                    logger.warning(f"Could not parse 'raw_response' column as JSON for connector {connector_id}")
+            
+            if not data:
+                logger.warning(f"Could not parse data for connector {connector_id}. Data type: {type(data_raw)}, Raw response type: {type(raw_response)}")
+                return {"fields": [], "message": f"No parseable data found for connector '{connector_id}'. Please ensure the connector has been run and has valid JSON data."}
+            
+            logger.info(f"Successfully parsed data for connector {connector_id}, type: {type(data)}")
+            
+            # Extract field names recursively
+            def extract_fields(obj, prefix=""):
+                fields = []
+                if isinstance(obj, dict):
+                    for key, value in obj.items():
+                        field_name = f"{prefix}.{key}" if prefix else key
+                        if isinstance(value, (dict, list)):
+                            fields.extend(extract_fields(value, field_name))
+                        else:
+                            fields.append({
+                                "name": field_name,
+                                "type": type(value).__name__,
+                                "sample_value": str(value)[:50] if value is not None else None
+                            })
+                elif isinstance(obj, list) and len(obj) > 0:
+                    # For arrays, extract fields from first item
+                    fields.extend(extract_fields(obj[0], prefix))
+                return fields
+            
+            fields = extract_fields(data)
+            logger.info(f"Extracted {len(fields)} fields for connector {connector_id}")
+            return {"fields": fields, "sample_data": data}
+    except Exception as e:
+        logger.error(f"Error getting connector fields: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

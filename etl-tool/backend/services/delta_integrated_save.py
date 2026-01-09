@@ -18,7 +18,7 @@ from datetime import datetime
 
 from services.delta_processor import process_api_data_with_delta, DeltaProcessor
 from services.api_data_transformer import transform_api_response
-from database import get_pool, update_pipeline_counts
+from database import get_pool, update_pipeline_counts, get_last_success_ts, update_last_success_ts
 
 logger = logging.getLogger(__name__)
 
@@ -89,13 +89,26 @@ async def save_to_database_with_delta(message: dict) -> Dict[str, Any]:
         else:
             ingestion_timestamp = datetime.utcnow()
         
-        # Step 1: Process API data with delta logic
+        # Step 0: Fetch last_success_ts for timestamp-based delta logic
+        last_success_ts = None
+        try:
+            last_success_ts = await get_last_success_ts(connector_id)
+            if last_success_ts:
+                logger.info(f"[DELTA] {connector_id}: Using timestamp-based delta (last_success_ts={last_success_ts})")
+            else:
+                logger.info(f"[DELTA] {connector_id}: No last_success_ts found, processing all records")
+        except Exception as ts_error:
+            logger.warning(f"[DELTA] Failed to fetch last_success_ts for {connector_id}: {ts_error}")
+            # Continue without timestamp filtering (treat as first run)
+        
+        # Step 1: Process API data with delta logic (timestamp-based filtering)
         try:
             delta_result = await process_api_data_with_delta(
                 connector_id=connector_id,
                 raw_api_response=raw_data,
                 ingestion_timestamp=ingestion_timestamp,
-                pipeline_run_id=pipeline_run_id
+                pipeline_run_id=pipeline_run_id,
+                last_success_ts=last_success_ts
             )
         except Exception as delta_error:
             error_msg = f"Delta processing failed for {connector_id}: {str(delta_error)}"
@@ -175,12 +188,13 @@ async def save_to_database_with_delta(message: dict) -> Dict[str, Any]:
                     # Add checksum to data for future comparison
                     clean_record["checksum"] = checksum
                     
-                    # UPSERT operation
+                    # UPSERT operation with updated_at set to NOW() at insert/update time (UTC)
                     # Use unique index on (connector_id, primary_key) for conflict resolution
                     row_id = await conn.fetchval("""
                         INSERT INTO api_connector_data (
                             connector_id,
                             timestamp,
+                            updated_at,
                             exchange,
                             instrument,
                             price,
@@ -195,10 +209,11 @@ async def save_to_database_with_delta(message: dict) -> Dict[str, Any]:
                             delta_type,
                             pipeline_run_id
                         )
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                        VALUES ($1, $2, NOW(), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
                         ON CONFLICT (connector_id, primary_key)
                         DO UPDATE SET
                             timestamp = EXCLUDED.timestamp,
+                            updated_at = NOW(),
                             exchange = EXCLUDED.exchange,
                             instrument = EXCLUDED.instrument,
                             price = EXCLUDED.price,
@@ -277,6 +292,41 @@ async def save_to_database_with_delta(message: dict) -> Dict[str, Any]:
                         f"[DELTA] Failed to update pipeline counts for {connector_id}: {count_error}",
                         exc_info=True
                     )
+            
+            # Step 4: Update last_success_ts only after full successful execution
+            # Set to MAX(updated_at) from the records we just saved
+            # Only update if we successfully saved records (saved_count > 0)
+            # This ensures we don't advance timestamp on failures
+            if saved_count > 0:
+                try:
+                    max_updated_at = await conn.fetchval("""
+                        SELECT MAX(updated_at)
+                        FROM api_connector_data
+                        WHERE connector_id = $1
+                          AND id = ANY($2::int[])
+                    """, connector_id, saved_ids)
+                    
+                    if max_updated_at:
+                        await update_last_success_ts(connector_id, max_updated_at)
+                        logger.info(
+                            f"[DELTA] ✅ Updated last_success_ts for {connector_id} to {max_updated_at}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[DELTA] Could not determine max_updated_at for {connector_id}"
+                        )
+                except Exception as ts_update_error:
+                    logger.error(
+                        f"[DELTA] Failed to update last_success_ts for {connector_id}: {ts_update_error}",
+                        exc_info=True
+                    )
+                    # Don't fail the entire operation if timestamp update fails
+                    # But note: last_success_ts won't be advanced, so next run will reprocess
+            else:
+                logger.info(
+                    f"[DELTA] No records saved for {connector_id}, skipping last_success_ts update "
+                    f"(timestamp not advanced on failure)"
+                )
         
         logger.info(
             f"[DELTA] ✅ {connector_id}: Saved {saved_count} delta records "

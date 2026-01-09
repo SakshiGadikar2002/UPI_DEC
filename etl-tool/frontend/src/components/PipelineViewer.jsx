@@ -52,6 +52,11 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
   const [options, setOptions] = useState([])
   const [showFitViewModal, setShowFitViewModal] = useState(false)
   const [isTriggering, setIsTriggering] = useState(false)
+  
+  // Refs must be declared before any hooks that use them
+  const currentRunIdRef = useRef(null)
+  const baselineCountsRef = useRef({}) // Track baseline counts when run starts
+  
   // When apiId is provided (from running connector), use it directly - no dropdown needed
   useEffect(() => {
     if (apiId) {
@@ -210,8 +215,35 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
             let recordCount = null
             let source = 'none'
             
-            // Priority 1: Try to extract count from step details first (most accurate)
-            if (step?.details) {
+            // For EXTRACT step: Prioritize data_stats.total_records (cumulative count from api_connector_data)
+            // This ensures we show cumulative records across all runs, not just the latest run's item count
+            if (stepName === 'extract' && ds.total_records !== undefined && ds.total_records !== null) {
+              recordCount = ds.total_records
+              source = 'data_stats.total_records'
+            }
+            // For TRANSFORM step: Show count from current run only (not cumulative)
+            // Calculate by subtracting baseline count from current total_items
+            else if (stepName === 'transform') {
+              // Only calculate current run count if we have an active run
+              const hasActiveRun = data?.current_run && (data.current_run.status === 'running' || data.current_run.status === 'in_progress')
+              if (hasActiveRun || currentRunIdRef.current) {
+                const baseline = baselineCountsRef.current.transform || 0
+                const currentTotal = ds.total_items !== undefined && ds.total_items !== null ? ds.total_items : 0
+                recordCount = Math.max(0, currentTotal - baseline)
+                source = 'data_stats.total_items (current run)'
+                console.log(`[ExtractCounts] Transform: baseline=${baseline}, current=${currentTotal}, run_count=${recordCount}`)
+              } else {
+                // No active run - fall through to step details or other fallbacks
+                recordCount = null
+              }
+            }
+            // For LOAD step: Use data_stats.total_records (cumulative count)
+            else if (stepName === 'load' && ds.total_records !== undefined && ds.total_records !== null) {
+              recordCount = ds.total_records
+              source = 'data_stats.total_records'
+            }
+            // Fallback 1: Try to extract count from step details (for other steps or if data_stats not available)
+            else if (step?.details) {
               try {
                 const details = typeof step.details === 'string' ? JSON.parse(step.details) : step.details
                 recordCount = details.records || details.items || details.count || details.record_count || 
@@ -223,25 +255,10 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
               }
             }
             
-            // Priority 2: Check if step has a direct count property
+            // Fallback 2: Check if step has a direct count property
             if ((recordCount === null || recordCount === undefined) && step.record_count !== undefined) {
               recordCount = step.record_count
               source = 'step.record_count'
-            }
-            
-            // Priority 3: Fallback to data_stats for specific steps
-            // CRITICAL: Use data_stats even if it's 0 - this is where real-time updates come from!
-            if (recordCount === null || recordCount === undefined) {
-              if (stepName === 'extract' && ds.total_records !== undefined && ds.total_records !== null) {
-                recordCount = ds.total_records
-                source = 'data_stats.total_records'
-              } else if (stepName === 'transform' && ds.total_items !== undefined && ds.total_items !== null) {
-                recordCount = ds.total_items
-                source = 'data_stats.total_items'
-              } else if (stepName === 'load' && ds.total_records !== undefined && ds.total_records !== null) {
-                recordCount = ds.total_records
-                source = 'data_stats.total_records'
-              }
             }
             
             // Always include count if we found one (including 0)
@@ -531,8 +548,30 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
       if (step && stepName) {
         let recordCount = null
         
-        // Try to extract count from step details first (most reliable)
-        if (step.details) {
+        // For EXTRACT step: Prioritize data_stats.total_records (cumulative count from api_connector_data)
+        if (stepName === 'extract' && dataStats.total_records !== undefined && dataStats.total_records !== null) {
+          recordCount = dataStats.total_records
+        }
+        // For TRANSFORM step: Show count from current run only (not cumulative)
+        // Calculate by subtracting baseline count from current total_items
+        else if (stepName === 'transform') {
+          // Only calculate current run count if we have an active run
+          const hasActiveRun = pipelineData?.current_run && (pipelineData.current_run.status === 'running' || pipelineData.current_run.status === 'in_progress')
+          if (hasActiveRun || currentRunIdRef.current) {
+            const baseline = baselineCountsRef.current.transform || 0
+            const currentTotal = dataStats.total_items !== undefined && dataStats.total_items !== null ? dataStats.total_items : 0
+            recordCount = Math.max(0, currentTotal - baseline)
+          } else {
+            // No active run - fall through to step details or other fallbacks
+            recordCount = null
+          }
+        }
+        // For LOAD step: Use data_stats.total_records (cumulative count)
+        else if (stepName === 'load' && dataStats.total_records !== undefined && dataStats.total_records !== null) {
+          recordCount = dataStats.total_records
+        }
+        // Fallback: Try to extract count from step details
+        else if (step.details) {
           try {
             const details = typeof step.details === 'string' ? JSON.parse(step.details) : step.details
             recordCount = details.records || details.items || details.count || details.record_count || null
@@ -541,20 +580,9 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
           }
         }
         
-        // Check if step has a direct record_count property
+        // Fallback: Check if step has a direct record_count property
         if ((recordCount === null || recordCount === undefined) && step.record_count !== undefined) {
           recordCount = step.record_count
-        }
-        
-        // Fallback to data_stats for specific steps
-        if (recordCount === null || recordCount === undefined) {
-          if (stepName === 'extract' && dataStats.total_records > 0) {
-            recordCount = dataStats.total_records
-          } else if (stepName === 'transform' && dataStats.total_items > 0) {
-            recordCount = dataStats.total_items
-          } else if (stepName === 'load' && dataStats.total_records > 0) {
-            recordCount = dataStats.total_records
-          }
         }
         
         // Include count even if it's 0 (0 is a valid count, not missing data)
@@ -576,9 +604,19 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
     const steps = pipelineData.current_run.steps || []
     const runStatus = pipelineData.current_run.status
     
+    // Create a map of step_name -> step data for quick lookup
+    const stepMap = new Map()
+    steps.forEach((s) => {
+      const stepName = s?.step_name || s?.stepName
+      if (stepName) {
+        stepMap.set(stepName, s)
+      }
+    })
+    
     console.log('[ActiveStep] Checking steps:', {
       runStatus,
       stepsCount: steps.length,
+      stepSequence,
       steps: steps.map(s => ({
         name: s?.step_name || s?.stepName,
         status: s?.status,
@@ -587,46 +625,39 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
       }))
     })
     
-    // First, look for a step with status 'running'
-    const running = steps.find((s) => {
-      const status = (s?.status || '').toLowerCase()
-      return status === 'running' || status === 'in_progress'
-    })
-    if (running) {
-      const stepName = running?.step_name || running?.stepName
-      if (stepName) {
-        console.log('[ActiveStep] Found running step:', stepName)
+    // Iterate through steps in the correct pipeline order (extract -> transform -> load)
+    // This ensures we check steps in sequence, not in array order
+    for (const stepName of stepSequence) {
+      const step = stepMap.get(stepName)
+      if (!step) continue
+      
+      const status = (step?.status || '').toLowerCase()
+      const hasStarted = step?.started_at && step.started_at !== null
+      const notCompleted = !step?.completed_at || step.completed_at === null
+      
+      // Priority 1: Step is explicitly marked as running
+      if (status === 'running' || status === 'in_progress') {
+        console.log('[ActiveStep] Found running step (by status):', stepName)
+        return stepName
+      }
+      
+      // Priority 2: Step has started but not completed
+      if (hasStarted && notCompleted) {
+        console.log('[ActiveStep] Found in-progress step (started but not completed):', stepName)
         return stepName
       }
     }
     
-    // Second, look for a step that has started but not completed
-    const inProgress = steps.find((s) => {
-      const hasStarted = s?.started_at && s.started_at !== null
-      const notCompleted = !s?.completed_at || s.completed_at === null
-      return hasStarted && notCompleted
-    })
-    if (inProgress) {
-      const stepName = inProgress?.step_name || inProgress?.stepName
-      if (stepName) {
-        console.log('[ActiveStep] Found in-progress step:', stepName)
-        return stepName
-      }
-    }
-    
-    // If pipeline is running but no step is marked as running, 
-    // find the first step that hasn't completed yet
+    // Priority 3: If pipeline is running but no step is marked as running,
+    // find the first incomplete step in sequence order
     if (runStatus === 'running' || runStatus === 'in_progress') {
-      const pendingStep = steps.find((s) => {
-        const stepName = s?.step_name || s?.stepName
-        if (!stepName) return false
-        const notCompleted = !s?.completed_at || s.completed_at === null
-        return notCompleted
-      })
-      if (pendingStep) {
-        const stepName = pendingStep?.step_name || pendingStep?.stepName
-        if (stepName) {
-          console.log('[ActiveStep] Found pending step (first incomplete):', stepName)
+      for (const stepName of stepSequence) {
+        const step = stepMap.get(stepName)
+        if (!step) continue
+        
+        const notCompleted = !step?.completed_at || step.completed_at === null
+        if (notCompleted) {
+          console.log('[ActiveStep] Found pending step (first incomplete in sequence):', stepName)
           return stepName
         }
       }
@@ -634,21 +665,30 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
     
     console.log('[ActiveStep] No active step found')
     return null
-  }, [pipelineData])
+  }, [pipelineData, stepSequence])
 
   const [animatedCounts, setAnimatedCounts] = useState({})
   const [recordTargets, setRecordTargets] = useState({})
   const [renderTick, setRenderTick] = useState(0)
   const targetsRef = useRef({})
   const timersRef = useRef({})
-  const currentRunIdRef = useRef(null)
   
-  // Reset counts to 0 when a new pipeline run starts
+  // Reset counts to 0 when a new pipeline run starts and capture baseline
   useEffect(() => {
     const currentRunId = pipelineData?.current_run?.run_id || pipelineData?.current_run?.id
+    const dataStats = pipelineData?.data_stats || {}
+    
     if (currentRunId && currentRunId !== currentRunIdRef.current) {
-      // New run detected - reset all counts to 0
+      // New run detected - capture baseline counts and reset animated counts to 0
       currentRunIdRef.current = currentRunId
+      
+      // Store baseline counts for calculating current run increments
+      baselineCountsRef.current = {
+        transform: dataStats.total_items || 0,
+        extract: dataStats.total_records || 0,
+        load: dataStats.total_records || 0
+      }
+      
       const resetCounts = {}
       stepSequence.forEach((stepName) => {
         resetCounts[stepName] = 0
@@ -664,7 +704,7 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
         }
       })
     }
-  }, [pipelineData?.current_run?.run_id, pipelineData?.current_run?.id, stepSequence])
+  }, [pipelineData?.current_run?.run_id, pipelineData?.current_run?.id, stepSequence, pipelineData?.data_stats])
   
   useEffect(() => {
     if (!recordTargets || Object.keys(recordTargets).length === 0) {
@@ -811,30 +851,41 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
       const status = stepStatuses[stepName] || 'pending'
       
       // Get record count using the same logic as step timeline for consistency
-      // First try to get from step details (most accurate)
+      // For EXTRACT: Prioritize data_stats.total_records (cumulative count from api_connector_data)
       const stepInfo = pipelineData?.current_run?.steps?.find((s) => (s?.step_name || s?.stepName) === stepName) ||
                       pipelineData?.history?.[0]?.steps?.find((s) => (s?.step_name || s?.stepName) === stepName) ||
                       null
       
       let recordCount = null
-      if (stepInfo?.details) {
+      // For EXTRACT step: Prioritize data_stats.total_records (cumulative count)
+      if (stepName === 'extract' && dataStats.total_records !== undefined && dataStats.total_records !== null) {
+        recordCount = dataStats.total_records
+      }
+      // For TRANSFORM step: Show count from current run only (not cumulative)
+      // Calculate by subtracting baseline count from current total_items
+      else if (stepName === 'transform') {
+        // Only calculate current run count if we have an active run
+        const hasActiveRun = pipelineData?.current_run && (pipelineData.current_run.status === 'running' || pipelineData.current_run.status === 'in_progress')
+        if (hasActiveRun || currentRunIdRef.current) {
+          const baseline = baselineCountsRef.current.transform || 0
+          const currentTotal = dataStats.total_items !== undefined && dataStats.total_items !== null ? dataStats.total_items : 0
+          recordCount = Math.max(0, currentTotal - baseline)
+        } else {
+          // No active run - fall through to step details or other fallbacks
+          recordCount = null
+        }
+      }
+      // For LOAD step: Use data_stats.total_records (cumulative count)
+      else if (stepName === 'load' && dataStats.total_records !== undefined && dataStats.total_records !== null) {
+        recordCount = dataStats.total_records
+      }
+      // Fallback: Try to get from step details
+      else if (stepInfo?.details) {
         try {
           const details = typeof stepInfo.details === 'string' ? JSON.parse(stepInfo.details) : stepInfo.details
           recordCount = details.records || details.items || details.count || details.record_count || null
         } catch (e) {
           // Keep null if parsing fails
-        }
-      }
-      
-      // Fallback to data_stats (same as step timeline)
-      // CRITICAL: Use data_stats even if it's 0 - this is where real-time updates come from!
-      if (recordCount === null || recordCount === undefined) {
-        if (stepName === 'extract' && dataStats.total_records !== undefined && dataStats.total_records !== null) {
-          recordCount = dataStats.total_records
-        } else if (stepName === 'transform' && dataStats.total_items !== undefined && dataStats.total_items !== null) {
-          recordCount = dataStats.total_items
-        } else if (stepName === 'load' && dataStats.total_records !== undefined && dataStats.total_records !== null) {
-          recordCount = dataStats.total_records
         }
       }
       
@@ -1174,26 +1225,36 @@ function PipelineViewer({ visible = true, apiId = null, onClose = null }) {
                 // Extract count from details or data_stats - use same logic as canvas nodes
                 let countDisplay = '—'
                 
-                // First try to get from step details (most accurate)
+                // For EXTRACT step: Prioritize data_stats.total_records (cumulative count from api_connector_data)
                 let recordCount = null
-                if (stepInfo?.details) {
+                if (stepName === 'extract' && dataStats.total_records !== undefined && dataStats.total_records !== null) {
+                  recordCount = dataStats.total_records
+                }
+                // For TRANSFORM step: Show count from current run only (not cumulative)
+                // Calculate by subtracting baseline count from current total_items
+                else if (stepName === 'transform') {
+                  // Only calculate current run count if we have an active run
+                  const hasActiveRun = pipelineData?.current_run && (pipelineData.current_run.status === 'running' || pipelineData.current_run.status === 'in_progress')
+                  if (hasActiveRun || currentRunIdRef.current) {
+                    const baseline = baselineCountsRef.current.transform || 0
+                    const currentTotal = dataStats.total_items !== undefined && dataStats.total_items !== null ? dataStats.total_items : 0
+                    recordCount = Math.max(0, currentTotal - baseline)
+                  } else {
+                    // No active run - fall through to step details or other fallbacks
+                    recordCount = null
+                  }
+                }
+                // For LOAD step: Use data_stats.total_records (cumulative count)
+                else if (stepName === 'load' && dataStats.total_records !== undefined && dataStats.total_records !== null) {
+                  recordCount = dataStats.total_records
+                }
+                // Fallback: Try to get from step details
+                else if (stepInfo?.details) {
                   try {
                     const parsed = typeof details === 'string' ? JSON.parse(details) : details
                     recordCount = parsed.records || parsed.items || parsed.count || parsed.record_count || null
                   } catch (e) {
                     // Keep null if parsing fails
-                  }
-                }
-                
-                // Fallback to data_stats (same as canvas)
-                // CRITICAL: Use data_stats even if it's 0 - this is where real-time updates come from!
-                if (recordCount === null || recordCount === undefined) {
-                  if (stepName === 'extract' && dataStats.total_records !== undefined && dataStats.total_records !== null) {
-                    recordCount = dataStats.total_records
-                  } else if (stepName === 'transform' && dataStats.total_items !== undefined && dataStats.total_items !== null) {
-                    recordCount = dataStats.total_items
-                  } else if (stepName === 'load' && dataStats.total_records !== undefined && dataStats.total_records !== null) {
-                    recordCount = dataStats.total_records
                   }
                 }
                 
