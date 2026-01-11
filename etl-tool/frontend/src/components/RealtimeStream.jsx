@@ -3369,7 +3369,7 @@ const fillComparisonData = (dataPoints, symbols) => {
                       'ETHUSDT': '#10b981', // Green for ETH
                       'BNBUSDT': '#f97316', // Orange for BNB
                       'SOLUSDT': '#06b6d4', // Cyan
-                      'XRPUSDT': '#8b5cf6', // Purple for XRP
+                      'XRPUSDT': '#78176b', // Purple for XRP
                       'ADAUSDT': '#ef4444', // Red for ADA
                       'DOGEUSDT': '#f59e0b', // Amber/Yellow
                       'MATICUSDT': '#ec4899', // Pink
@@ -3389,7 +3389,7 @@ const fillComparisonData = (dataPoints, symbols) => {
                     
                     // Fallback colors for instruments not in map
                     const fallbackColors = [
-                      '#3b82f6', '#10b981', '#f97316', '#8b5cf6', '#ef4444',
+                      '#3b82f6', '#10b981', '#f97316', '#78176b', '#ef4444',
                       '#06b6d4', '#f59e0b', '#ec4899', '#14b8a6', '#6366f1',
                       '#84cc16', '#f43f5e', '#a855f7', '#0ea5e9', '#22c55e',
                       '#eab308', '#fb923c', '#c084fc', '#60a5fa', '#34d399'
@@ -3985,7 +3985,7 @@ const fillComparisonData = (dataPoints, symbols) => {
               .sort((a, b) => b.value - a.value)
               .slice(0, 8);
             
-            const COLORS = ['#3b82f6', '#f97316', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#f59e0b', '#06b6d4'];
+            const COLORS = ['#3b82f6', '#f97316', '#10b981', '#ef4444', '#78176b', '#ec4899', '#f59e0b', '#06b6d4'];
             
             // If no data, show a message
             if (!marketCapData || marketCapData.length === 0) {

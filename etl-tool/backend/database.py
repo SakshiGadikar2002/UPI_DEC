@@ -772,6 +772,12 @@ async def _initialize_tables():
             ON pipeline_runs(api_id, status, started_at DESC)
         """)
 
+        # Additional index to speed up queries that select the latest run per api_id
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_pipeline_runs_api_id_started_at
+            ON pipeline_runs(api_id, started_at DESC)
+        """)
+
         # Create visualization_data table for processed visualization data
         # This table stores aggregated data specifically for visualization/monitoring
         await conn.execute("""

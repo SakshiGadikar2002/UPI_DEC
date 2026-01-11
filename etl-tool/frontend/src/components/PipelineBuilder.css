@@ -41,8 +41,8 @@ body:has(.sidebar.closed) .pipeline-builder {
   align-items: flex-start;
   padding: 16px 24px;
   background: white;
-  border-bottom: 1px solid #e5e7eb;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  /* border-bottom: 1px solid #e5e7eb;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); */
   gap: 16px;
   flex-shrink: 0;
   z-index: 10;
@@ -64,12 +64,13 @@ body:has(.sidebar.closed) .pipeline-builder {
 .pipeline-back-button {
   display: flex !important;
   align-items: center;
-  gap: 8px;
-  padding: 10px 18px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  background: white;
-  color: #374151;
+  justify-content: center;
+  gap: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  color: #3B82F6;
   cursor: pointer;
   font-size: 14px;
   font-weight: 600;
@@ -78,19 +79,32 @@ body:has(.sidebar.closed) .pipeline-builder {
   visibility: visible !important;
   opacity: 1 !important;
   flex-shrink: 0;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  box-shadow: none;
   position: relative;
   z-index: 1003;
+  width: 24px;
+  height: 24px;
 }
 
 .pipeline-back-button:hover {
-  background: #f9fafb;
-  border-color: #9ca3af;
-  color: #111827;
+  color: #2563EB;
+  transform: translateX(-2px);
 }
+
+/* Primary color variable */
+:root {
+  --primary-color: #3B82F6;
+}
+
+/* Apply primary color to buttons and accents */
+.pipeline-save-btn { background: var(--primary-color); }
+.pipeline-save-btn:hover:not(:disabled) { background: #2563EB; }
+.pipeline-back-button { color: var(--primary-color); }
+.sidebar-close-btn { color: #6B21A8; }
 
 .pipeline-back-button svg {
   flex-shrink: 0;
+  color: inherit;
 }
 
 .pipeline-builder-header-left > div {
@@ -146,6 +160,40 @@ body:has(.sidebar.closed) .pipeline-builder {
   gap: 8px;
   align-items: center;
   flex-shrink: 0;
+  flex-wrap: wrap;
+  position: relative;
+}
+
+/* Visualization Parameters Panel positioning */
+.pipeline-builder-actions > .viz-params-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 1000;
+  margin-top: 0;
+}
+
+.pipeline-view-tabs {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.pipeline-view-tabs .tab {
+  padding: 8px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f3f4f6;
+  color: #374151;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pipeline-view-tabs .tab.active {
+  background: #3B82F6;
+  color: white;
+  border-color: #3B82F6;
 }
 
 .pipeline-list-btn {
@@ -183,6 +231,7 @@ body:has(.sidebar.closed) .pipeline-builder {
 
 .pipeline-save-btn:hover:not(:disabled) {
   background: #2563EB;
+  transform: translateY(-1px);
 }
 
 .pipeline-save-btn:disabled {
@@ -217,10 +266,13 @@ body:has(.sidebar.closed) .pipeline-builder {
 
 .pipeline-builder-body {
   display: flex;
+  flex-direction: row;
   flex: 1;
   overflow: hidden;
   min-height: 0;
   position: relative;
+  background: #f5f5f5;
+  gap: 0;
 }
 
 .pipeline-builder-sidebar {
@@ -236,6 +288,7 @@ body:has(.sidebar.closed) .pipeline-builder {
   flex-shrink: 0;
   z-index: 5;
   position: relative;
+  max-height: 100%;
 }
 
 .sidebar-section {
@@ -260,8 +313,8 @@ body:has(.sidebar.closed) .pipeline-builder {
   width: 100%;
   padding: 12px 16px;
   margin-bottom: 8px;
-  border: 1.5px solid;
-  border-radius: 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
   background: white;
   color: #374151;
   cursor: pointer;
@@ -272,7 +325,7 @@ body:has(.sidebar.closed) .pipeline-builder {
   display: flex;
   align-items: center;
   gap: 10px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  box-shadow: none;
 }
 
 .add-node-btn:hover {
@@ -284,12 +337,200 @@ body:has(.sidebar.closed) .pipeline-builder {
   margin-bottom: 0;
 }
 
-.pipeline-builder-canvas {
+.pipeline-builder-canvas-wrapper {
   flex: 1;
-  position: relative;
-  background: #fafafa;
-  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  min-height: 0;
   min-width: 0;
+  padding: 20px;
+  position: relative;
+}
+
+.pipeline-builder-canvas {
+  position: relative;
+  background: white;
+  overflow: hidden;
+  width: 80%;
+  height: 75vh;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  flex-shrink: 0;
+}
+
+.pipeline-results-inline-wrapper {
+  padding: 20px;
+  overflow: auto;
+}
+
+.pipeline-results-inline {
+  background: white;
+  border-radius: 8px;
+  padding: 16px;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+  max-height: calc(100vh - 200px);
+  overflow: auto;
+}
+
+/* When pipeline builder sidebar is closed hide sidebar */
+.pipeline-builder.sidebar-closed .pipeline-builder-sidebar {
+  display: none;
+}
+
+/* Expand canvas when sidebar is closed */
+.pipeline-builder.sidebar-closed .pipeline-builder-canvas {
+  width: 90% !important;
+}
+
+/* Ensure inline results table can scroll horizontally when many columns exist */
+.pipeline-results-inline .data-table-container {
+  max-height: calc(100vh - 260px);
+  overflow-x: auto;
+  overflow-y: auto;
+}
+
+.pipeline-results-inline .data-table {
+  min-width: max-content;
+}
+
+.node-config-horizontal-panel {
+  display: none;
+}
+
+.node-config-right-panel {
+  display: none;
+}
+
+.node-config-side-panel {
+  width: 280px;
+  background: white;
+  border-right: 1px solid #e5e7eb;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex-shrink: 0;
+  z-index: 5;
+  position: relative;
+  height: 100%;
+}
+
+.node-config-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-right: 12px;
+  border-right: 2px solid #e5e7eb;
+  flex-shrink: 0;
+}
+
+.node-config-header span {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2937;
+  white-space: nowrap;
+}
+
+.node-config-close-btn {
+  background: none;
+  border: none;
+  color: #9ca3af;
+  cursor: pointer;
+  font-size: 20px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.node-config-close-btn:hover {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.node-config-fields {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: 1;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.node-config-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.node-config-horizontal-panel label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+
+.node-config-horizontal-panel input,
+.node-config-horizontal-panel select,
+.node-config-horizontal-panel textarea {
+  padding: 7px 11px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 13px;
+  background: white;
+  min-width: 140px;
+  transition: all 0.2s ease;
+  font-family: inherit;
+}
+
+.node-config-horizontal-panel input:hover,
+.node-config-horizontal-panel select:hover {
+  border-color: #d1d5db;
+  background: #fafbfc;
+}
+
+.node-config-horizontal-panel input:focus,
+.node-config-horizontal-panel select:focus,
+.node-config-horizontal-panel textarea:focus {
+  outline: none;
+  border-color: #3B82F6;
+  background: white;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.node-config-delete-btn {
+  padding: 6px 10px;
+  background: #fee2e2;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.node-config-delete-btn:hover {
+  background: #fca5a5;
+  border-color: #f87171;
+  color: #991b1b;
 }
 
 .pipeline-builder-node {
@@ -326,50 +567,75 @@ body:has(.sidebar.closed) .pipeline-builder {
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3) !important;
 }
 
+.node-hovered {
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3) !important;
+  transition: all 0.2s;
+}
+
 .node-config-panel {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
+  width: 100%;
+  min-height: 0;
+}
+
+.node-config-panel > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
 }
 
 .node-config-panel label {
-  font-size: 12px;
-  font-weight: 500;
-  color: #374151;
-  margin-bottom: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
   display: block;
-}
-
-.node-config-panel label {
-  font-size: 12px;
-  font-weight: 500;
-  color: #374151;
-  display: block;
-  margin-bottom: 4px;
+  white-space: nowrap;
 }
 
 .node-config-panel input,
 .node-config-panel select {
-  padding: 8px 10px;
-  border: 1px solid #d1d5db;
-  border-radius: 4px;
-  font-size: 14px;
+  padding: 7px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 5px;
+  font-size: 12px;
   width: 100%;
-  box-sizing: border-box;
   background: white;
-  transition: all 0.2s;
+  transition: all 0.2s ease;
+  font-family: inherit;
+}
+
+.node-config-panel input:hover,
+.node-config-panel select:hover {
+  border-color: #d1d5db;
+  background: #fafbfc;
 }
 
 .node-config-panel input:focus,
 .node-config-panel select:focus {
   outline: none;
   border-color: #3B82F6;
+  background: white;
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
 .node-config-panel select[multiple] {
   min-height: 120px;
-  padding: 4px;
+  max-height: 200px;
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.destination-node-config {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
 }
 
 .node-config-panel select[multiple] option {

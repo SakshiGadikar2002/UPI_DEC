@@ -1,12 +1,14 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import SimpleFlow from './SimpleFlow'
+import VisualizationParametersPanel from './VisualizationParametersPanel'
+import PipelineVisualization from './PipelineVisualization'
 import './PipelineBuilder.css'
 
 const NODE_TYPES = {
   source: { label: 'Source', icon: '📥', color: '#3B82F6' },
   field_selector: { label: 'Field Selector', icon: '📋', color: '#10B981' },
   filter: { label: 'Filter', icon: '🔍', color: '#F59E0B' },
-  transform: { label: 'Transform', icon: '⚙️', color: '#8B5CF6' },
+  transform: { label: 'Transform', icon: '⚙️', color: '#78176b' },
   destination: { label: 'Destination', icon: '💾', color: '#EF4444' }
 }
 
@@ -26,9 +28,17 @@ function PipelineBuilder({ onClose, pipelineId = null }) {
   const [showPipelineList, setShowPipelineList] = useState(false)
   const [showResults, setShowResults] = useState(false)
   const [pipelineResults, setPipelineResults] = useState(null)
+  const [activeTab, setActiveTab] = useState('canvas') // 'canvas' | 'results'
   const [currentPipelineId, setCurrentPipelineId] = useState(pipelineId)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
   const [history, setHistory] = useState([])
   const [future, setFuture] = useState([])
+  const [visualizationConfig, setVisualizationConfig] = useState({
+    selected_fields: [],
+    order: [],
+    visibility: {}
+  })
+  const [hoveredNodeId, setHoveredNodeId] = useState(null)
   const containerRef = useRef(null)
   const pipelineBuilderRef = useRef(null)
   const nodesRef = useRef([])
@@ -149,6 +159,16 @@ function PipelineBuilder({ onClose, pipelineId = null }) {
         setNodes(data.definition?.nodes || [])
         setEdges(data.definition?.edges || [])
         setCurrentPipelineId(id)
+        // Load visualization config if it exists
+        if (data.definition?.visualization_config) {
+          setVisualizationConfig(data.definition.visualization_config)
+        } else {
+          setVisualizationConfig({
+            selected_fields: [],
+            order: [],
+            visibility: {}
+          })
+        }
         // Update URL without reload
         const newUrl = new URL(window.location)
         newUrl.searchParams.set('pipeline', id)
@@ -348,7 +368,8 @@ function PipelineBuilder({ onClose, pipelineId = null }) {
         name: pipelineName,
         description: pipelineDescription,
         nodes: nodes,
-        edges: edges
+        edges: edges,
+        visualization_config: visualizationConfig
       }
 
       const url = currentPipelineId 
@@ -402,6 +423,7 @@ function PipelineBuilder({ onClose, pipelineId = null }) {
         const result = await resp.json()
         setPipelineResults(result)
         setShowResults(true)
+        setActiveTab('results')
         alert(`Pipeline executed! Processed ${result.records_processed || 0} records.`)
       } else {
         throw new Error('Failed to run pipeline')
@@ -427,6 +449,11 @@ function PipelineBuilder({ onClose, pipelineId = null }) {
     setShowResults(false)
     setPipelineResults(null)
     setCurrentPipelineId(null)
+    setVisualizationConfig({
+      selected_fields: [],
+      order: [],
+      visibility: {}
+    })
     window.history.replaceState({}, '', window.location.pathname)
   }
 
@@ -460,15 +487,17 @@ function PipelineBuilder({ onClose, pipelineId = null }) {
       },
       position: node.position,
       style: {
-        borderColor: nodeType.color,
-        borderWidth: selectedNode === node.id ? 3 : 2,
+        borderColor: hoveredNodeId === node.id ? '#3B82F6' : nodeType.color,
+        borderWidth: selectedNode === node.id ? 3 : (hoveredNodeId === node.id ? 2 : 2),
         background: '#fff',
         padding: '8px 12px',
         borderRadius: '8px',
         minWidth: '120px',
-        cursor: 'pointer'
+        cursor: 'pointer',
+        boxShadow: hoveredNodeId === node.id ? '0 0 0 2px rgba(59, 130, 246, 0.3)' : 'none',
+        transition: 'all 0.2s'
       },
-      className: selectedNode === node.id ? 'node-selected' : ''
+      className: selectedNode === node.id ? 'node-selected' : (hoveredNodeId === node.id ? 'node-hovered' : '')
     }
   })
 
@@ -480,7 +509,7 @@ function PipelineBuilder({ onClose, pipelineId = null }) {
   const selectedNodeData = nodes.find(n => n.id === selectedNode)
 
   return (
-    <div className="pipeline-builder" ref={pipelineBuilderRef}>
+    <div className={`pipeline-builder ${sidebarOpen ? '' : 'sidebar-closed'}`} ref={pipelineBuilderRef}>
       <div className="pipeline-builder-header">
         <div className="pipeline-builder-header-left">
           <button 
@@ -492,32 +521,14 @@ function PipelineBuilder({ onClose, pipelineId = null }) {
               }
             }} 
             className="pipeline-back-button"
+            title="Go back"
           >
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2.5">
               <path d="M12 15l-5-5 5-5"/>
             </svg>
-            Back
           </button>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', flex: 1, minWidth: 0 }}>
             <h2 style={{ margin: 0, whiteSpace: 'nowrap', fontSize: '20px', fontWeight: 600 }}>Pipeline Builder</h2>
-            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
-              <input
-                type="text"
-                placeholder="Pipeline Name"
-                value={pipelineName}
-                onChange={(e) => setPipelineName(e.target.value)}
-                className="pipeline-name-input"
-                style={{ minWidth: '200px', flex: '1 1 200px' }}
-              />
-              <textarea
-                placeholder="Description (optional)"
-                value={pipelineDescription}
-                onChange={(e) => setPipelineDescription(e.target.value)}
-                className="pipeline-description-input"
-                rows="2"
-                style={{ minWidth: '250px', flex: '1 1 250px' }}
-              />
-            </div>
           </div>
         </div>
         <div className="pipeline-builder-actions">
@@ -624,6 +635,16 @@ function PipelineBuilder({ onClose, pipelineId = null }) {
           <button onClick={savePipeline} disabled={isSaving} className="pipeline-save-btn">
             {isSaving ? 'Saving...' : 'Save Pipeline'}
           </button>
+          <VisualizationParametersPanel
+            nodes={nodes}
+            edges={edges}
+            availableFields={availableFields}
+            pipelineResults={pipelineResults}
+            visualizationConfig={visualizationConfig}
+            onConfigChange={setVisualizationConfig}
+            selectedNode={hoveredNodeId}
+            onNodeHover={setHoveredNodeId}
+          />
           <button 
             onClick={runPipeline} 
             disabled={isRunning || !currentPipelineId} 
@@ -633,28 +654,67 @@ function PipelineBuilder({ onClose, pipelineId = null }) {
             {isRunning ? 'Running...' : 'Run Pipeline'}
           </button>
           {currentPipelineId && pipelineResults && (
-            <button 
-              onClick={() => setShowResults(!showResults)} 
-              style={{
-                padding: '8px 16px',
-                background: showResults ? '#8B5CF6' : '#F3F4F6',
-                color: showResults ? 'white' : '#374151',
-                border: 'none',
-                borderRadius: '6px',
-                fontSize: '13px',
-                fontWeight: 500,
-                cursor: 'pointer',
-                transition: 'all 0.2s'
-              }}
-            >
-              {showResults ? 'Hide Results' : 'Show Results'}
-            </button>
+            <div className="pipeline-view-tabs" role="tablist">
+              <button
+                className={`tab ${activeTab === 'canvas' ? 'active' : ''}`}
+                onClick={() => setActiveTab('canvas')}
+                role="tab"
+                aria-selected={activeTab === 'canvas'}
+              >
+                Canvas
+              </button>
+              <button
+                className={`tab ${activeTab === 'results' ? 'active' : ''}`}
+                onClick={() => setActiveTab('results')}
+                role="tab"
+                aria-selected={activeTab === 'results'}
+              >
+                Results
+              </button>
+              <button
+                className={`tab ${activeTab === 'visualization' ? 'active' : ''}`}
+                onClick={() => setActiveTab('visualization')}
+                role="tab"
+                aria-selected={activeTab === 'visualization'}
+              >
+                📊 Visualization
+              </button>
+            </div>
           )}
         </div>
       </div>
 
-      <div className="pipeline-builder-body" style={{ marginBottom: showResults ? '40vh' : '0', transition: 'margin-bottom 0.3s ease' }}>
-        <div className="pipeline-builder-sidebar">
+      <div className="pipeline-builder-body" style={{ marginBottom: activeTab === 'results' ? '0' : '0', transition: 'margin-bottom 0.3s ease' }}>
+        <div className={`pipeline-builder-sidebar ${sidebarOpen ? '' : 'collapsed'}`}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
+            <button
+              onClick={() => setSidebarOpen(false)}
+              className="sidebar-close-btn"
+              title="Close sidebar"
+              style={{ background: 'none', border: 'none', fontSize: '24px', color: '#9ca3af', cursor: 'pointer', padding: '0 4px', lineHeight: '1' }}
+            >
+              ×
+            </button>
+          </div>
+          <div className="sidebar-section">
+            <h3>Pipeline Details</h3>
+            <input
+              type="text"
+              placeholder="Pipeline Name"
+              value={pipelineName}
+              onChange={(e) => setPipelineName(e.target.value)}
+              className="pipeline-name-input"
+              style={{ width: '100%', marginBottom: '8px' }}
+            />
+            <textarea
+              placeholder="Description (optional)"
+              value={pipelineDescription}
+              onChange={(e) => setPipelineDescription(e.target.value)}
+              className="pipeline-description-input"
+              rows="2"
+              style={{ width: '100%', resize: 'vertical' }}
+            />
+          </div>
           <div className="sidebar-section">
             <h3>Add Nodes</h3>
             {Object.entries(NODE_TYPES).map(([type, info]) => (
@@ -662,7 +722,6 @@ function PipelineBuilder({ onClose, pipelineId = null }) {
                 key={type}
                 className="add-node-btn"
                 onClick={() => addNode(type)}
-                style={{ borderColor: info.color }}
               >
                 {info.icon} {info.label}
               </button>
@@ -708,9 +767,59 @@ function PipelineBuilder({ onClose, pipelineId = null }) {
             </div>
           )}
 
-          {selectedNodeData && (
-            <div className="sidebar-section">
-              <h3>Configure Node</h3>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+          {activeTab === 'canvas' && (
+            <div className="pipeline-builder-canvas-wrapper">
+              <div className="pipeline-builder-canvas" ref={containerRef}>
+                <EditableFlow 
+                  nodes={flowNodes} 
+                  edges={flowEdges}
+                  onNodeDrag={updateNodePosition}
+                  onNodeClick={setSelectedNode}
+                  onStartConnection={startConnection}
+                  onCompleteConnection={completeConnection}
+                  connectingFrom={connectingFrom}
+                />
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'results' && pipelineResults && (
+            <div className="pipeline-results-inline-wrapper">
+              <PipelineResultsPanel 
+                results={pipelineResults}
+                onClose={() => setActiveTab('canvas')}
+                inline={true}
+              />
+            </div>
+          )}
+
+          {activeTab === 'visualization' && pipelineResults && (
+            <div className="pipeline-results-inline-wrapper">
+              <PipelineVisualization
+                pipelineResults={pipelineResults}
+                visualizationConfig={visualizationConfig}
+                availableFields={availableFields}
+              />
+            </div>
+          )}
+        </div>
+
+        {selectedNodeData && (
+          <div className="node-config-side-panel">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingBottom: '12px', borderBottom: '1px solid #e5e7eb' }}>
+              <span style={{ fontSize: '13px', fontWeight: 700, color: '#1f2937' }}>⚙️ {NODE_TYPES[selectedNodeData.type]?.label}</span>
+              <button
+                onClick={() => setSelectedNode(null)}
+                className="node-config-close-btn"
+                title="Close configuration"
+              >
+                ✕
+              </button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <NodeConfigPanel
                 node={selectedNodeData}
                 connectors={connectors}
@@ -719,36 +828,19 @@ function PipelineBuilder({ onClose, pipelineId = null }) {
                 onLoadFields={loadFields}
                 allNodes={nodes}
               />
-              <button
-                className="delete-node-btn"
-                onClick={() => deleteNode(selectedNode)}
-              >
-                Delete Node
-              </button>
             </div>
-          )}
-        </div>
-
-        <div className="pipeline-builder-canvas" ref={containerRef}>
-          <EditableFlow 
-            nodes={flowNodes} 
-            edges={flowEdges}
-            onNodeDrag={updateNodePosition}
-            onNodeClick={setSelectedNode}
-            onStartConnection={startConnection}
-            onCompleteConnection={completeConnection}
-            connectingFrom={connectingFrom}
-          />
-        </div>
+            <button
+              className="node-config-delete-btn"
+              onClick={() => deleteNode(selectedNode)}
+              title="Delete this node"
+              style={{ marginTop: 'auto' }}
+            >
+              Delete Node
+            </button>
+          </div>
+        )}
       </div>
       
-      {/* Results Panel */}
-      {showResults && pipelineResults && (
-        <PipelineResultsPanel 
-          results={pipelineResults}
-          onClose={() => setShowResults(false)}
-        />
-      )}
     </div>
   )
 }
@@ -803,6 +895,7 @@ function NodeConfigPanel({ node, connectors, availableFields, onConfigChange, on
 
   if (node.type === 'field_selector') {
     const selectedFields = config.selected_fields || []
+    
     const toggleField = (fieldName) => {
       if (selectedFields.includes(fieldName)) {
         onConfigChange({ selected_fields: selectedFields.filter(f => f !== fieldName) })
@@ -813,79 +906,72 @@ function NodeConfigPanel({ node, connectors, availableFields, onConfigChange, on
     
     return (
       <div className="node-config-panel">
-        <label>Select Fields (Multi-select)</label>
-        {!hasFields ? (
-          <div className="field-selector-empty">
-            {sourceConnectorId ? (
-              <>
-                <p style={{ marginBottom: '8px' }}>⏳ Loading fields from source connector...</p>
-                <p style={{ fontSize: '11px', marginTop: '4px', color: '#6B7280' }}>
-                  <strong>Connector:</strong> {sourceConnectorId}
-                </p>
-                <p style={{ fontSize: '11px', marginTop: '8px', color: '#9CA3AF', fontStyle: 'italic' }}>
-                  💡 Tip: Make sure the connector has been run at least once and has data in the database.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => onLoadFields(sourceConnectorId)}
-                  style={{
-                    marginTop: '12px',
-                    padding: '6px 12px',
-                    fontSize: '12px',
-                    background: '#3B82F6',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer'
-                  }}
-                >
-                  🔄 Retry Loading Fields
-                </button>
-              </>
-            ) : (
-              <p>Please configure a Source node with a connector first to see available fields</p>
-            )}
-          </div>
-        ) : (
-          <>
-            <div className="field-checkbox-list" style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid #d1d5db', borderRadius: '6px', padding: '8px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%' }}>
+          <label style={{ fontSize: '10px', fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.3px' }}>Select Fields</label>
+          {!hasFields ? (
+            <div className="field-selector-empty" style={{ padding: '12px', fontSize: '12px', color: '#6B7280', background: '#f9fafb', borderRadius: '5px', textAlign: 'center' }}>
+              {sourceConnectorId ? (
+                <>Loading fields...</>
+              ) : (
+                <>Configure Source node</>
+              )}
+            </div>
+          ) : (
+            <div style={{
+              border: '1px solid #e5e7eb',
+              borderRadius: '5px',
+              background: 'white',
+              maxHeight: '150px',
+              overflowY: 'auto',
+              padding: '6px'
+            }}>
               {availableFields.map(field => (
-                <label key={field.name} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', cursor: 'pointer' }}>
+                <label key={field.name} style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '6px 8px',
+                  cursor: 'pointer',
+                  borderRadius: '4px',
+                  transition: 'background 0.2s'
+                }} onMouseEnter={(e) => e.currentTarget.style.background = '#f3f4f6'} onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
                   <input
                     type="checkbox"
                     checked={selectedFields.includes(field.name)}
                     onChange={() => toggleField(field.name)}
-                    style={{ cursor: 'pointer' }}
+                    style={{ cursor: 'pointer', width: '16px', height: '16px' }}
                   />
-                  <span style={{ fontSize: '13px' }}>
-                    {field.name} <span style={{ color: '#6B7280', fontSize: '11px' }}>({field.type})</span>
+                  <span style={{ fontSize: '12px', color: '#374151', flex: 1 }}>
+                    {field.name}
+                  </span>
+                  <span style={{ fontSize: '10px', color: '#9ca3af' }}>
+                    {field.type}
                   </span>
                 </label>
               ))}
             </div>
-            {selectedFields.length > 0 && (
-              <div className="selected-fields-preview" style={{ marginTop: '12px' }}>
-                <strong>Selected ({selectedFields.length}):</strong>
-                <div className="selected-fields-tags" style={{ marginTop: '8px', display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                  {selectedFields.map(field => (
-                    <span key={field} className="field-tag" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 8px', background: '#EDE9FE', color: '#6D28D9', borderRadius: '4px', fontSize: '12px' }}>
-                      {field}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onConfigChange({ selected_fields: selectedFields.filter(f => f !== field) })
-                        }}
-                        className="field-tag-remove"
-                        style={{ background: 'none', border: 'none', color: '#6D28D9', cursor: 'pointer', fontSize: '16px', lineHeight: '1', padding: '0' }}
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </>
+          )}
+        </div>
+        {selectedFields.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <span style={{ fontSize: '10px', fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.3px' }}>Selected ({selectedFields.length})</span>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+              {selectedFields.map(field => (
+                <span key={field} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 8px', background: '#EDE9FE', color: '#6D28D9', borderRadius: '4px', fontSize: '11px', fontWeight: 600 }}>
+                  {field}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onConfigChange({ selected_fields: selectedFields.filter(f => f !== field) })
+                    }}
+                    style={{ background: 'none', border: 'none', color: '#6D28D9', cursor: 'pointer', fontSize: '14px', lineHeight: '1', padding: '0' }}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          </div>
         )}
       </div>
     )
@@ -1043,7 +1129,7 @@ function NodeConfigPanel({ node, connectors, availableFields, onConfigChange, on
                 style={{
                   padding: '6px 12px',
                   fontSize: '12px',
-                  background: '#8B5CF6',
+                  background: '#78176b',
                   color: 'white',
                   border: 'none',
                   borderRadius: '4px',
@@ -1392,34 +1478,36 @@ function DestinationNodeConfig({ node, config, onConfigChange }) {
   const destinationType = config.destination?.type || 'database'
   
   return (
-    <div className="node-config-panel">
-      <label>Destination Type</label>
-      <select
-        value={destinationType}
-        onChange={(e) => onConfigChange({
-          destination: { ...config.destination, type: e.target.value }
-        })}
-        style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #D1D5DB', fontSize: '13px' }}
-      >
-        <option value="database">Database</option>
-        <option value="file">File (CSV/JSON)</option>
-        <option value="load">Load from File</option>
-      </select>
+    <div className="destination-node-config">
+      <div>
+        <label style={{ fontSize: '10px', fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.3px' }}>Destination Type</label>
+        <select
+          value={destinationType}
+          onChange={(e) => onConfigChange({
+            destination: { ...config.destination, type: e.target.value }
+          })}
+          style={{ padding: '7px 10px', borderRadius: '5px', border: '1px solid #e5e7eb', fontSize: '12px', width: '100%' }}
+        >
+          <option value="database">Database</option>
+          <option value="file">File (CSV/JSON)</option>
+          <option value="load">Load from File</option>
+        </select>
+      </div>
       
       {destinationType === 'database' ? (
-        <>
-          <label>Connector ID (for saving)</label>
+        <div>
+          <label style={{ fontSize: '10px', fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.3px' }}>Connector ID</label>
           <input
             type="text"
             placeholder="custom_pipeline"
             value={config.connector_id || ''}
             onChange={(e) => onConfigChange({ connector_id: e.target.value })}
-            style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #D1D5DB', fontSize: '13px' }}
+            style={{ padding: '7px 10px', borderRadius: '5px', border: '1px solid #e5e7eb', fontSize: '12px', width: '100%' }}
           />
-        </>
+        </div>
       ) : destinationType === 'load' ? (
-        <>
-          <label>Load Data from File</label>
+        <div style={{ width: '100%' }}>
+          <label style={{ fontSize: '10px', fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.3px' }}>Load Data from File</label>
           <div
             className={`file-drop-zone ${isDragging ? 'dragging' : ''}`}
             onDragOver={handleDragOver}
@@ -1471,10 +1559,10 @@ function DestinationNodeConfig({ node, config, onConfigChange }) {
               </div>
             )}
           </div>
-        </>
+        </div>
       ) : (
-        <>
-          <label>File Export</label>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '100%' }}>
+          <label style={{ fontSize: '10px', fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.3px' }}>File Export</label>
           <div
             className={`file-drop-zone ${isDragging ? 'dragging' : ''}`}
             onDragOver={handleDragOver}
@@ -1518,18 +1606,20 @@ function DestinationNodeConfig({ node, config, onConfigChange }) {
               </div>
             )}
           </div>
-          <label>File Format</label>
-          <select
-            value={config.destination?.file_format || 'csv'}
-            onChange={(e) => onConfigChange({
-              destination: { ...config.destination, file_format: e.target.value }
-            })}
-            style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #D1D5DB', fontSize: '13px' }}
-          >
-            <option value="csv">CSV</option>
-            <option value="json">JSON</option>
-          </select>
-        </>
+          <div>
+            <label style={{ fontSize: '10px', fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.3px' }}>File Format</label>
+            <select
+              value={config.destination?.file_format || 'csv'}
+              onChange={(e) => onConfigChange({
+                destination: { ...config.destination, file_format: e.target.value }
+              })}
+              style={{ padding: '7px 10px', borderRadius: '5px', border: '1px solid #e5e7eb', fontSize: '12px', width: '100%' }}
+            >
+              <option value="csv">CSV</option>
+              <option value="json">JSON</option>
+            </select>
+          </div>
+        </div>
       )}
     </div>
   )
@@ -1622,7 +1712,7 @@ function SavedPipelinesList({ apiBase, onLoadPipeline }) {
 }
 
 // Pipeline Results Panel Component
-function PipelineResultsPanel({ results, onClose }) {
+function PipelineResultsPanel({ results, onClose, inline = false }) {
   const stepResults = results.step_results || []
   const finalData = results.final_data || []
   const panelRef = useRef(null)
@@ -1631,8 +1721,9 @@ function PipelineResultsPanel({ results, onClose }) {
   const fieldSelectorStep = stepResults.find(step => step.node_type === 'field_selector')
   const selectedFields = fieldSelectorStep?.selected_fields || null
   
-  // Adjust position based on sidebar state
+  // If not inline, adjust position based on sidebar state (overlay behavior)
   useEffect(() => {
+    if (inline) return
     const adjustForSidebar = () => {
       if (!panelRef.current) return
       const sidebar = document.querySelector('.sidebar')
@@ -1646,24 +1737,24 @@ function PipelineResultsPanel({ results, onClose }) {
         panelRef.current.style.width = '100%'
       }
     }
-    
+
     adjustForSidebar()
     const observer = new MutationObserver(adjustForSidebar)
     const sidebar = document.querySelector('.sidebar')
     if (sidebar) {
       observer.observe(sidebar, { attributes: true, attributeFilter: ['class'] })
     }
-    
+
     window.addEventListener('resize', adjustForSidebar)
-    
+
     return () => {
       observer.disconnect()
       window.removeEventListener('resize', adjustForSidebar)
     }
-  }, [])
+  }, [inline])
   
   return (
-    <div className="pipeline-results-panel" ref={panelRef}>
+    <div className={inline ? 'pipeline-results-inline' : 'pipeline-results-panel'} ref={panelRef}>
       <div className="pipeline-results-header">
         <h3>Execution Results</h3>
         <button 
